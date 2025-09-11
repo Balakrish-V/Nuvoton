@@ -1,0 +1,54 @@
+#include "numicro_8051.h"  
+
+volatile uint32_t ms_ticks = 0;
+// Timer0 ISR
+// Timer0 ISR
+void Timer0_ISR(void) interrupt 1
+{
+    TH0 = 0xFA;   // reload high byte for 1ms (16 MHz Fsys/12)
+    TL0 = 0x2B;   // reload low byte
+    ms_ticks++;   // increment millisecond counter
+}
+
+// Timer0 initialization
+void Timer0_Init(void)
+{
+    TMOD &= 0xF0;        // clear Timer0 control bits
+    TMOD |= 0x01;        // Timer0 mode 1 (16-bit)
+
+    TH0 = 0xFA;          // preload for 1ms
+    TL0 = 0x2B;
+
+    ET0 = 1;             // enable Timer0 interrupt
+    TR0 = 1;             // start Timer0
+    EA  = 1;             // enable global interrupts
+}
+
+// millis function
+uint32_t _millis(void)
+{
+    uint32_t ms;
+    EA = 0;              // disable interrupts (atomic read)
+    ms = ms_ticks;
+    EA = 1;              // re-enable interrupts
+    return ms;
+}
+
+void main(void)
+{
+    uint32_t last_time = 0;
+
+    P17_PUSHPULL_MODE;   // set pin P1.7 as push-pull output
+    P17 = 0;             // LED off initially
+
+    Timer0_Init();       // start 1ms timer
+
+    while (1)
+    {
+        if ((_millis() - last_time) >= 1000) // 1000 ms = 1 sec
+        {
+            last_time = _millis();
+            P17 = !P17;  // toggle LED on P1.7
+        }
+    }
+}
