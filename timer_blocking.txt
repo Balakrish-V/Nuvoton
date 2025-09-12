@@ -1,0 +1,55 @@
+#include "MS51_16K.H"
+
+/* USER CONFIG */
+#define DELAY_UNIT_MS   1
+#define DELAY_UNIT_SEC  2
+#define DELAY_TIME      1               // 1 second
+#define DELAY_UNIT      DELAY_UNIT_SEC  // DELAY_UNIT_MS or DELAY_UNIT_SEC
+
+/* TIMER2 BLOCKING DELAY @ 16 MHz HIRC */
+void Timer2_Delay(unsigned int time, unsigned char unit)
+{
+    unsigned long loops = 0;
+    unsigned long i;
+    
+    if (unit == DELAY_UNIT_MS) 
+        loops = time;
+    else if (unit == DELAY_UNIT_SEC) 
+        loops = time * 1000UL;
+    
+    for (i = 0; i < loops; i++)
+    {
+        /* TIMER2 CONFIG FOR 1 MS @ 16MHz */
+        T2MOD = 0x00;         // Timer2 normal auto-reload mode
+        
+        // For 1ms delay at 16MHz: 16000 counts needed
+        // Timer2 counts up, so reload = 65536 - 16000 = 49536 = 0xC180
+        RCMP2H = 0xC1;        // Reload high byte
+        RCMP2L = 0x80;        // Reload low byte
+        TH2    = 0xC1;        // Timer2 initial high value
+        TL2    = 0x80;        // Timer2 initial low value
+        
+        TF2 = 0;              // Clear overflow flag
+        TR2 = 1;              // Start Timer2
+        while (!TF2);         // Wait for overflow
+        TF2 = 0;              // Clear overflow flag
+        TR2 = 0;              // Stop Timer2
+    }
+}
+
+void main(void)
+{
+    /* SET SYSTEM CLOCK TO 16MHz HIRC */
+    CKDIV = 0x00;    // No clock division (full 16MHz)
+    // HIRC is default clock source, no need to switch
+    
+    /* CONFIGURE P0.4 AS PUSH-PULL OUTPUT */
+    P0M1 &= ~0x10;   // Clear bit for P0.4 (not open-drain)
+    P0M2 |= 0x10;    // Set push-pull mode
+    
+    while (1)
+    {
+        P0 ^= 0x10;   // Toggle P0.4
+        Timer2_Delay(DELAY_TIME, DELAY_UNIT);
+    }
+}
