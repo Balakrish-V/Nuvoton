@@ -1,0 +1,1720 @@
+// TODO: use built-in WIZNET timeout feature instead of _millis() (need interrupts)
+// TODO: implement wiznet_sw_reset() and wiznet_phy_reset() functions
+// TODO: complete architecture: store and use Wiznet status, sockets statuses,
+//       change them after every send/receive and so on
+// TODO: separate low-level interface (SPI, GPIO etc.): some sort of read/write byte,
+//       read/write chunk of bytes, assert/release pin
+// TODO: switch debug statements (#ifndef NDEBUG)
+// TODO: align macroses and variables
+// TODO: migrate from enums where there is no needs in them: (e.g.
+//       'typedef socket_status_t int' and macroses to describe different statuses)
+
+
+#include "wiz_h.h"
+#include "spi.h"
+#include "MS51_16K.h"
+
+//for spi
+#define WIZNET_CS_LOW()   (P15 = 0)
+#define WIZNET_CS_HIGH()  (P15 = 1)
+
+#define WIZNET_RST_LOW()   (P1 &= ~0x08)   // P1.3 = 0
+#define WIZNET_RST_HIGH()  (P1 |= 0x08)    // P1.3 = 1
+#define WIZNET_RST_TOGGLE() (P1 ^= 0x08)   // toggle P1.3
+
+/*
+ *  Other global settings and definitions
+ */
+
+#define MAX_TCP_SEGMENT_SIZE 1460  // recommended datasheet value
+
+// different timeouts (in milliseconds)
+#define WIZNET_TIMEOUT_RESET 8000
+#define SOCK_TIMEOUT_OPEN 1000
+#define SOCK_TIMEOUT_CONNECT 2000
+#define SOCK_TIMEOUT_CLOSE 1000
+#define SOCK_TIMEOUT_DISCON 2000
+// Wiznet' Interrupt Assert Waiting Time
+#define IAWT 31249  // 31249 - 5ms @ 25MHz
+// timeout for SPI transmitting/receiving (in milliseconds)
+#define WIZNET_SPI_TX_TIMEOUT 100
+#define WIZNET_SPI_RX_TIMEOUT 100
+
+
+/*
+ *  BSB[4:0] bits of Control Phase
+ */
+const uint8_t sock_n_registers[NUM_OF_SOCKETS] = {
+    SOCKET_0_REGISTERS,
+    SOCKET_1_REGISTERS,
+    SOCKET_2_REGISTERS,
+    SOCKET_3_REGISTERS,
+    SOCKET_4_REGISTERS,
+    SOCKET_5_REGISTERS,
+    SOCKET_6_REGISTERS,
+    SOCKET_7_REGISTERS
+};
+
+const uint8_t sock_n_tx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_TX_BUFFER,
+    SOCKET_1_TX_BUFFER,
+    SOCKET_2_TX_BUFFER,
+    SOCKET_3_TX_BUFFER,
+    SOCKET_4_TX_BUFFER,
+    SOCKET_5_TX_BUFFER,
+    SOCKET_6_TX_BUFFER,
+    SOCKET_7_TX_BUFFER
+};
+const uint8_t sock_n_rx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_RX_BUFFER,
+    SOCKET_1_RX_BUFFER,
+    SOCKET_2_RX_BUFFER,
+    SOCKET_3_RX_BUFFER,
+    SOCKET_4_RX_BUFFER,
+    SOCKET_5_RX_BUFFER,
+    SOCKET_6_RX_BUFFER,
+    SOCKET_7_RX_BUFFER
+};
+
+
+/*
+ *  For multiple Wiznets management
+ */
+uint32_t wiznets_cnt = 0;
+wiznet_t *wiznets[NUM_OF_WIZNETS];
+
+/*
+static void _write_spi(unsigned int addr, unsigned char bank, unsigned char *data_t, unsigned int len)
+{
+    uint16_t i = 0;
+    uint8_t ctrl_phase = 0;
+
+    // Swap bytes (big-endian for WIZNET)
+    uint8_t addr_hi = (addr >> 8) & 0xFF;
+    uint8_t addr_lo = addr & 0xFF;
+
+    ctrl_phase |= (bank << 3) | (1 << RWB);  // set Write flag
+
+    // CS select
+    WIZNET_CS_LOW();
+
+    // Address Phase
+    Spi_Write_Byte(addr_hi);
+    Spi_Write_Byte(addr_lo);
+
+    // Control Phase
+    Spi_Write_Byte(ctrl_phase);
+
+    // Data Phase
+    for (i = 0; i < len; i++) {
+        Spi_Write_Byte(data_t[i]);
+    }
+
+    // CS deselect
+    WIZNET_CS_HIGH();
+}
+
+
+static void _read_spi(unsigned int addr, unsigned char bank, unsigned char *buf, unsigned int len)
+{
+    uint16_t i = 0;
+    uint8_t ctrl_phase = (bank << 3);  // Read = 0, so just bank shifted
+
+    // Swap bytes (big-endian for WIZNET)
+    uint8_t addr_hi = (addr >> 8) & 0xFF;
+    uint8_t addr_lo = addr & 0xFF;
+
+    // CS select
+    WIZNET_CS_LOW();
+
+    // Address Phase
+    Spi_Write_Byte(addr_hi);
+    Spi_Write_Byte(addr_lo);
+
+    // Control Phase
+    Spi_Write_Byte(ctrl_phase);
+
+    // Data Phase (send dummy bytes to read back)
+    for (i = 0; i < len; i++) {
+        buf[i] = Spi_Read_Byte(0x00);
+    }
+
+    // CS deselect
+    WIZNET_CS_HIGH();
+}
+*/
+
+#define W5500_RWB_READ   (0 << 2)   // Correct: read = 0
+#define W5500_RWB_WRITE  (1 << 2)   // Correct: write = 1
+#define W5500_OM_VDM     (0x00)     // variable data length
+
+static void _write_spi(uint16_t addr, uint8_t block, uint8_t *data_t, uint16_t len)
+{
+    uint8_t addr_hi   = (addr >> 8) & 0xFF;
+    uint8_t addr_lo   = addr & 0xFF;
+    uint8_t ctrl_phase = (block << 3) | W5500_RWB_WRITE | W5500_OM_VDM;
+    uint16_t i;
+
+    WIZNET_CS_LOW();
+
+    Spi_Write_Byte(addr_hi);
+    Spi_Write_Byte(addr_lo);
+    Spi_Write_Byte(ctrl_phase);
+
+    for (i = 0; i < len; i++) {
+        Spi_Write_Byte(data_t[i]);
+    }
+
+    WIZNET_CS_HIGH();
+}
+
+static void _read_spi(uint16_t addr, uint8_t block, uint8_t *buf, uint16_t len)
+{
+    uint8_t addr_hi   = (addr >> 8) & 0xFF;
+    uint8_t addr_lo   = addr & 0xFF;
+    uint8_t ctrl_phase = (block << 3) | W5500_RWB_READ | W5500_OM_VDM;
+    uint16_t i;
+
+    WIZNET_CS_LOW();
+
+    Spi_Write_Byte(addr_hi);
+    Spi_Write_Byte(addr_lo);
+    Spi_Write_Byte(ctrl_phase);
+
+    for (i = 0; i < len; i++) {
+        buf[i] = Spi_Read_Byte(0xff);
+    }
+
+    WIZNET_CS_HIGH();
+}
+
+/*
+ *  Reset Wiznet using hardware pin
+ */
+/*
+static void wiznet_hw_reset()
+{
+    uint8_t byte;
+    uint32_t timeout_start;
+    uint32_t t = 0;
+    // Configure P1.3 as push-pull output for reset
+    P13_PUSHPULL_MODE;
+
+    // Toggle reset pin
+    WIZNET_RST_LOW();
+    // wait ~500 us (we?ll round to 1 ms since we use millis)
+    t = _millis();
+    while ((_millis() - t) < 1);
+
+    WIZNET_RST_HIGH();
+    // wait ~1 ms
+    t = _millis();
+    while ((_millis() - t) < 1);
+
+    // Wait for reset complete and PHY link up
+    timeout_start = _millis();
+	
+    while (1)
+    {
+        // read PHYCFGR register (1 byte)
+        _read_spi(PHYCFGR, COMMON_REGISTERS, &byte, 1);
+
+        // Check reset done + link up
+        if ((byte & (1 << PHYCFGR_RST)) && (byte & (1 << LNK))) {
+            //printf("WIZNET RESET OK\n");
+            break;
+        }
+
+        // Timeout
+        if ((_millis() - timeout_start) >= WIZNET_TIMEOUT_RESET) {
+            //printf("WIZNET RESET ERROR\n");
+            break;
+        }
+    }
+}
+*/
+
+static void wiznet_hw_reset(void)
+{
+    uint8_t byte;
+    uint32_t timeout_counter = 0;
+
+    // Configure P1.3 as push-pull output for reset
+    P13_PUSHPULL_MODE;
+
+    // Toggle reset pin
+    WIZNET_RST_LOW();
+    Timer2_DELAY(DELAY_UNIT_MS,100);
+
+    WIZNET_RST_HIGH();
+    Timer2_DELAY(DELAY_UNIT_MS,100);
+
+    // Wait for reset complete and PHY link up
+    timeout_counter = 0;
+    while (1)
+    {
+        _read_spi(PHYCFGR, COMMON_REGISTERS, &byte, 1);
+
+        if ((byte & (1 << PHYCFGR_RST)) && (byte & (1 << LNK)))
+        {
+					  debug_led(LED_TOGGLE);
+            break;
+        }
+
+        timeout_counter++;
+        if (timeout_counter > 100)
+        {
+            debug_led(LED_OFF);
+            break;
+        }
+    }
+}
+
+/*
+ *  Initialize 'Wiznet' structure with default values. Always call this function before
+ *  any other operations with Wiznet to prevent undefined behavior
+ *
+ *    ex.: wiznet_t my_wiznet = wiznet_t_init()
+ *
+ */
+wiznet_t wiznet_t_init(void)
+{
+    wiznet_t wiznet;
+
+    // --- private members ---
+    wiznet._id = -1;
+    wiznet._sockets_cnt = 0;
+    wiznet._sockets_taken = 0x00;
+    wiznet._sockets[0] = NULL;
+    wiznet._sockets[1] = NULL;
+    wiznet._sockets[2] = NULL;
+    wiznet._sockets[3] = NULL;
+    wiznet._sockets[4] = NULL;
+    wiznet._sockets[5] = NULL;
+    wiznet._sockets[6] = NULL;
+    wiznet._sockets[7] = NULL;
+
+    // --- platform-specific pins ---
+    wiznet.RST_Port = 1;   // Port 1
+    wiznet.RST_Pin  = 3;   // Pin 1.3
+    wiznet.CS_Port  = 1;   // Port 1
+    wiznet.CS_Pin   = 5;   // Pin 1.5
+	
+	  P13_PUSHPULL_MODE;   // Reset pin
+    P13 = 1;             // Reset high (inactive)
+
+    // --- public members (default IP/MAC) ---
+    wiznet.mac_addr[0] = 0; wiznet.mac_addr[1] = 0;
+    wiznet.mac_addr[2] = 0; wiznet.mac_addr[3] = 0;
+    wiznet.mac_addr[4] = 0; wiznet.mac_addr[5] = 0;
+
+    wiznet.ip_addr[0] = 0; wiznet.ip_addr[1] = 0;
+    wiznet.ip_addr[2] = 0; wiznet.ip_addr[3] = 0;
+
+    wiznet.ip_gateway_addr[0] = 0; wiznet.ip_gateway_addr[1] = 0;
+    wiznet.ip_gateway_addr[2] = 0; wiznet.ip_gateway_addr[3] = 0;
+
+    wiznet.subnet_mask[0] = 0; wiznet.subnet_mask[1] = 0;
+    wiznet.subnet_mask[2] = 0; wiznet.subnet_mask[3] = 0;
+
+    return wiznet;
+}
+
+
+
+/*
+ *  Initialize new Wiznet. Before calling this function, fill in all necessary fields of
+ *  the 'wiznet' structure. Returns '0' at success and non-zero value otherwise
+ */
+int32_t wiznet_init(wiznet_t *wiznet)
+{
+    uint32_t i;
+//    uint8_t is_first_wiznet_flag;
+    uint16_t i_awt;
+    uint8_t mac_addr_2[6], ip_addr_2[4], ip_gateway_addr_2[4], subnet_mask_2[4];
+    uint8_t version;
+
+    // initialize Wiznets array
+    static uint8_t is_first_wiznet = 1;
+    if (is_first_wiznet) {
+        is_first_wiznet = 0;
+        for (i = 0; i < NUM_OF_WIZNETS; i++) wiznets[i] = NULL;
+    }
+
+    // add this Wiznet to the array of Wiznets
+    if (wiznets_cnt >= NUM_OF_WIZNETS) {
+        //printf("TOO MANY WIZNETS\n");
+        return -1;
+    }
+    else {
+        for (i = 0; i < NUM_OF_WIZNETS; i++) {
+            if (wiznets[i] == NULL) {
+                wiznets[i] = wiznet;
+                wiznet->_id = i;
+                break;
+            }
+        }
+        wiznets_cnt++;
+    }
+
+    // hardware reset
+    wiznet_hw_reset();
+
+    // set Interrupt Assert Waiting Time
+    i_awt = IAWT;
+    i_awt = SWAP_TWO_BYTES(i_awt);
+    _write_spi( INTLEVEL, COMMON_REGISTERS, (uint8_t *)&i_awt, sizeof(uint16_t));
+
+    // set MAC address
+    _write_spi(SHAR, COMMON_REGISTERS, wiznet->mac_addr, 6);
+    // set IP address
+    _write_spi( SIPR, COMMON_REGISTERS, wiznet->ip_addr, 4);
+    // set gateway
+    _write_spi( GAR, COMMON_REGISTERS, wiznet->ip_gateway_addr, 4);
+    // set subnet mask
+    _write_spi( SUBR, COMMON_REGISTERS, wiznet->subnet_mask, 4);
+
+    // DEBUG: read back
+    _read_spi(SHAR, COMMON_REGISTERS, mac_addr_2, 6);
+    _read_spi(SIPR, COMMON_REGISTERS, ip_addr_2, 4);
+    _read_spi(GAR, COMMON_REGISTERS, ip_gateway_addr_2, 4);
+    _read_spi(SUBR, COMMON_REGISTERS, subnet_mask_2, 4);
+
+/*
+    //printff("WIZNET MAC-address: 0x%X.0x%X.0x%X.0x%X.0x%X.0x%X\n",
+        mac_addr_2[0], mac_addr_2[1], mac_addr_2[2],
+        mac_addr_2[3], mac_addr_2[4], mac_addr_2[5]);
+    printf("WIZNET IP-address: %d.%d.%d.%d\n",
+        ip_addr_2[0], ip_addr_2[1], ip_addr_2[2], ip_addr_2[3]);
+    printf("WIZNET IPgateway-address: %d.%d.%d.%d\n",
+        ip_gateway_addr_2[0], ip_gateway_addr_2[1],
+        ip_gateway_addr_2[2], ip_gateway_addr_2[3]);
+    printf("WIZNET subnet mask: %d.%d.%d.%d\n",
+        subnet_mask_2[0], subnet_mask_2[1],
+        subnet_mask_2[2], subnet_mask_2[3]);
+*/
+
+    // check version
+    version = wiznet_get_version();
+		
+//    printf("WIZNET version: %d\n", version);
+
+    return (version == 4) ? 0 : -1;
+}
+
+/*
+ *  Unregister Wiznet 'wiznet'
+ */
+void wiznet_deinit(wiznet_t *wiznet) {
+    wiznet_hw_reset();
+
+  	wiznet->_id = -1;  // mark the structure as invalid from now
+    if (wiznets_cnt) wiznets_cnt--;
+    wiznets[wiznet->_id] = NULL;
+}
+
+/*
+ *  Get HW version of Wiznet chip from VERSIONR register. According to the datasheet, version
+ *  is always should be read as 0x04
+ */
+uint8_t wiznet_get_version(void) {
+    uint8_t version = 0;
+    _read_spi( VERSIONR, COMMON_REGISTERS, &version, sizeof(uint8_t));
+    return version;
+}
+
+
+/*
+ *  Single universal handler to manage all types of interrupts of given 'wiznet'. Connect
+ *  INTn pin and call this function every falling edge of INTn signal. It automatically
+ *  defines interrupt type and clears interrupt in the end
+ *
+ *  NOTE: currently only Sockets 0-7 interrupts are supported
+ */
+#pragma OPTIMIZE (6)
+void wiznet_isr_handler(wiznet_t *wiznet) {
+    // read SIR register to find out what Socket trigger an interrupt
+    uint8_t sock_int_reg;
+    uint8_t type=0;
+		uint8_t idx=0;
+    uint8_t ir_type = 0;
+    uint8_t sock_n_register = 0;
+	  uint8_t byte = 0;
+	    // get socket with interrupt
+    socket_t *sock;
+	
+	 _read_spi( SIR, COMMON_REGISTERS, &sock_int_reg, sizeof(uint8_t));
+//  if (!sock_int_reg) return;
+//  printf("SIR: %d\n", sock_int_reg);
+
+    for (idx=0; idx<NUM_OF_SOCKETS; idx++) {
+        if ((1<<idx) & sock_int_reg) {
+            sock = wiznet->_sockets[idx];
+            break;
+        }
+    }
+    
+		sock_n_register = sock_n_registers[sock->_id];
+
+    // identify interrupt type
+		_read_spi(Sn_IR, sock_n_register, &ir_type, sizeof(uint8_t));
+//  printf("Sn_IR: %d\n", ir_type);
+//  if (!ir_type) return;
+
+    for (type=0; type<NUM_OF_SOCK_IRS; type++) {
+        if ((1<<type) & ir_type) {
+            // insert your code here
+            switch (type) {
+            case SOCK_IR_CON:
+                //printf("ISR: CONNECTED\n");
+                break;
+            case SOCK_IR_DISCON:
+                //printf("ISR: DISCONNECTED\n");
+                break;
+            case SOCK_IR_RECV:
+                //printf("ISR: RECEIVED\n");
+                break;
+            case SOCK_IR_TIMEOUT:
+                //printf("ISR: TIMEOUT\n");
+                break;
+            case SOCK_IR_SEND_OK:
+                //printf("ISR: SEND OK\n");
+                break;
+            }
+        }
+    }
+
+    // clear interrupt
+    _write_spi(Sn_IR, sock_n_register, &ir_type, sizeof(uint8_t));
+     byte = 0;
+    _write_spi(SIR, COMMON_REGISTERS, &byte, sizeof(uint8_t));
+}
+#pragma OPTIMIZE (7)
+
+
+/*
+ *  Initialize 'Socket' structure with default values. Always call this function before
+ *  any other operations with Socket to prevent undefined behavior
+ *
+ *    ex.: socket_t my_sock = socket_t_init();
+ *
+ */
+#pragma OPTIMIZE (6)
+socket_t socket_t_init(void) {
+    socket_t sock;
+
+    /* Initialize private members */
+    sock._id = 1;
+    sock._host_wiznet = NULL;
+
+    /* Initialize public members */
+    sock.type = SOCK_TYPE_CLOSED;
+    sock.status = SOCK_STATUS_CLOSED;
+
+    /* Initialize arrays */
+    sock.ip[0] = 0;
+    sock.ip[1] = 0;
+    sock.ip[2] = 0;
+    sock.ip[3] = 0;
+
+    sock.macraw_dst[0] = 0;
+    sock.macraw_dst[1] = 0;
+    sock.macraw_dst[2] = 0;
+    sock.macraw_dst[3] = 0;
+    sock.macraw_dst[4] = 0;
+    sock.macraw_dst[5] = 0;
+
+    sock.port = 0;
+		
+		sock.dest_port = 0;
+
+    return sock;
+}
+#pragma OPTIMIZE (7)
+/*
+ *  Initialize the new socket 'sock' of the 'wiznet' chip. Function automatically finds free
+ *  Socket in Wiznet and assigns ID number depends on requested type of socket. It also
+ *  trying to open (and connect, in case of TCP) socket. Before calling this function, fill in
+ *  all necessary fields of the 'sock' structure
+ *
+ *  NOTE: currently TCP supports only client role
+ */
+
+#pragma OPTIMIZE (6)
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock)
+{
+    uint8_t i;
+    uint8_t sock_n_register;
+    uint8_t byte;
+    uint16_t max_sgmnt_size;
+    uint8_t ip_b[4];
+    uint16_t port_b;
+    uint8_t tmpbuf[2];
+	
+    /* 0. check free sockets */
+    if (wiznet->_sockets_cnt >= NUM_OF_SOCKETS)
+    {
+        //printf("Number of sockets for this WIZNET has been exceeded\n");
+        sock->status = SOCK_STATUS_NUM_EXCEEDED;
+        return sock->status;
+    }
+
+    /* 1. choose socket ID */
+    if (sock->type == SOCK_TYPE_MACRAW)
+    {
+        if (((1 << 0) & wiznet->_sockets_taken) == 0)
+        {
+            sock->_id = 0;
+        }
+        else
+        {
+            //printf("Socket0 for MACRAW already occupied\n");
+            sock->status = SOCK_STATUS_MACRAW_TAKEN;
+            return sock->status;
+        }
+    }
+    else if (wiznet->_sockets_taken == 0xFE) /* 11111110 */
+    {
+        sock->_id = 0;
+    }
+    else
+    {
+        for (i = 1; i < NUM_OF_SOCKETS; i++)
+        {
+            if (((1 << i) & wiznet->_sockets_taken) == 0)
+            {
+                sock->_id = i;
+                break;
+            }
+        }
+    }
+
+    /* 2. assign host Wiznet */
+    sock->_host_wiznet = wiznet;
+
+    /* 3. choose socket register */
+    sock_n_register = sock_n_registers[sock->_id];
+
+    /* 4. set socket mode */
+    switch (sock->type)
+    {
+        case SOCK_TYPE_UDP:
+            byte = SOCK_TYPE_UDP;
+            break;
+
+        case SOCK_TYPE_TCP:
+            byte = SOCK_TYPE_TCP;
+            max_sgmnt_size = MAX_TCP_SEGMENT_SIZE;
+            /* if your code previously swapped before writing, keep that behavior:
+               here we write high byte then low byte */
+            tmpbuf[0] = (uint8_t)((max_sgmnt_size >> 8) & 0xFF);
+            tmpbuf[1] = (uint8_t)(max_sgmnt_size & 0xFF);
+            _write_spi(Sn_MSSR, sock_n_register, tmpbuf, 2);
+            break;
+
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_TYPE_MACRAW;
+            /* write destination MAC (6 bytes) */
+            _write_spi(Sn_DHAR, sock_n_register, sock->macraw_dst, 6);
+            break;
+
+        default:
+            byte = 0;
+            break;
+    }
+
+    /* write mode register (single byte) */
+    _write_spi(Sn_MR, sock_n_register, &byte, 1);
+
+    /* 5. set port & destination IP for TCP/UDP */
+    if (sock->type != SOCK_TYPE_MACRAW)
+    {
+        /* write SOURCE port (2 bytes) - this should be different from destination */
+        tmpbuf[0] = (uint8_t)((sock->port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->port & 0xFF);
+        _write_spi(Sn_PORT, sock_n_register, tmpbuf, 2);
+
+        /* write DESTINATION port (2 bytes) */
+        tmpbuf[0] = (uint8_t)((sock->dest_port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->dest_port & 0xFF);
+        _write_spi(Sn_DPORT, sock_n_register, tmpbuf, 2);
+
+        /* write destination IP (4 bytes) */
+        _write_spi(Sn_DIPR, sock_n_register, sock->ip, 4);
+    }
+
+    /* 6. open and (optionally) connect */
+      sock_open(sock);
+		
+		  if (sock->type == SOCK_TYPE_TCP) 
+						sock_connect(sock);
+			
+    /* 7. if success, update Wiznet bookkeeping */
+    if (sock->status > 0)
+    {
+        wiznet->_sockets_cnt++;
+        wiznet->_sockets_taken |= (1 << sock->_id);
+        wiznet->_sockets[sock->_id] = sock;
+    }
+    else
+    {
+        /* rollback on error */
+        sock->_id = -1;
+        sock->_host_wiznet = NULL;
+    }
+
+    /* 8. debug: read IP & port using _read_spi (not wiz_read) */
+    _read_spi(Sn_DIPR, sock_n_register, ip_b, 4);
+    _read_spi(Sn_DPORT, sock_n_register, (uint8_t *)&port_b, sizeof(uint16_t));
+    /* If your _read_spi returns bytes MSB then LSB into port_b as [hi][lo] on little-endian CPU,
+       you may need to swap depending on your convention. Previously you did:
+           port_b = SWAP_TWO_BYTES(port_b);
+       If you used that before, keep it. Otherwise comment the next line out. */
+    port_b = SWAP_TWO_BYTES(port_b);
+
+    //printf("socket status: 0x%X\n", sock->status);
+    //printf("ip: %d.%d.%d.%d\n", ip_b[0], ip_b[1], ip_b[2], ip_b[3]);
+    //printf("port: %d\n", port_b);
+
+    return sock->status;
+}
+#pragma OPTIMIZE (7)
+
+/*
+ *  Reset (almost) all meaningful registers of socket 'sock'. Other registers either aren't
+ *  important or will be overwritten at next initialization. You should call this function only
+ *  after closing the socket
+ */
+#pragma OPTIMIZE (7)
+void sock_reset(socket_t *sock) {
+    // choose appropriate register
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+
+    uint8_t byte = 0;
+    uint8_t two_bytes[2] = {0,0};
+    uint8_t four_bytes[4] = {0,0,0,0};
+    uint8_t six_bytes[6] = {0,0,0,0,0,0};
+
+    // Mode Register
+    _write_spi(Sn_MR, sock_n_register, &byte, sizeof(uint8_t));
+    // Source Port
+    _write_spi(Sn_PORT, sock_n_register, two_bytes, sizeof(two_bytes));
+    // Destination Port
+    _write_spi(Sn_DPORT, sock_n_register, two_bytes, sizeof(two_bytes));
+    // Maximum Segment Size
+    _write_spi(Sn_MSSR, sock_n_register, two_bytes, sizeof(two_bytes));
+    // MAC address of destination
+    _write_spi(Sn_DHAR, sock_n_register, six_bytes, sizeof(six_bytes));
+    // IP address of destination
+    _write_spi(Sn_DIPR, sock_n_register, four_bytes, sizeof(four_bytes));
+}
+
+
+/*
+ *  Function resets socket 'sock' and remove its registration in the host Wiznet. It frees
+ *  corresponding HW SocketN for reusing later
+ */
+void sock_deinit(socket_t *sock)
+{
+    uint8_t byte;
+
+    // 1. reset the socket
+    sock_reset(sock);
+
+    // 2. disable interrupt for this socket
+    _read_spi(SIMR, COMMON_REGISTERS, &byte, 1);
+    byte &= ~(1 << sock->_id);
+    _write_spi(SIMR, COMMON_REGISTERS, &byte, 1);
+
+    // 3. update Wiznet socket bookkeeping
+    if (sock->_host_wiznet->_sockets_cnt > 0)
+    {
+        sock->_host_wiznet->_sockets_cnt--;
+    }
+
+    sock->_host_wiznet->_sockets_taken &= ~(1 << sock->_id);
+    sock->_host_wiznet->_sockets[sock->_id] = NULL;
+}
+
+/*
+ *  Send 'OPEN' command to socket 'sock' and wait for its completion
+ 
+void sock_open(socket_t *sock)
+{
+    uint8_t sock_n_register;
+    uint8_t byte;
+    uint8_t status;
+    uint32_t timeout_start;
+
+    // 1. choose appropriate socket register
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // 2. send OPEN command
+    byte = SOCK_CMD_OPEN;
+    _write_spi(Sn_CR, sock_n_register, &byte, 1);
+
+    // 3. wait for socket opening
+    timeout_start = _millis();
+
+    while (1)
+    {
+        // read socket status
+        _read_spi(Sn_SR, sock_n_register, &status, 1);
+
+        // check status according to socket type
+        if ((sock->type == SOCK_TYPE_UDP    && status == SOCK_STATUS_UDP)   ||
+            (sock->type == SOCK_TYPE_TCP    && status == SOCK_STATUS_INIT)  ||
+            (sock->type == SOCK_TYPE_MACRAW && status == SOCK_STATUS_MACRAW))
+        {
+            sock->status = status;
+            break;
+        }
+
+        // handle timeout
+        if ((_millis() - timeout_start) >= SOCK_TIMEOUT_OPEN)
+        {
+            sock->status = SOCK_STATUS_CANT_OPEN;
+            break;
+        }
+    }
+}
+*/
+
+uint8_t sock_open(socket_t *sock)
+{
+    uint8_t sock_n_register = 0;
+    uint8_t byte = 0;
+    uint8_t status = 0;
+
+    // 1. choose appropriate socket register
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // 2. send OPEN command
+    byte = SOCK_CMD_OPEN;
+    _write_spi(Sn_CR, sock_n_register, &byte, 1);
+
+    // 3. read socket status once
+    _read_spi(Sn_SR, sock_n_register, &status, 1);
+
+    if ((sock->type == SOCK_TYPE_UDP    && status == SOCK_STATUS_UDP)   ||
+        (sock->type == SOCK_TYPE_TCP    && status == SOCK_STATUS_INIT)  ||
+        (sock->type == SOCK_TYPE_MACRAW && status == SOCK_STATUS_MACRAW))
+    {
+        sock->status = status;
+			  return 1;
+    }
+    else
+    {
+        sock->status = SOCK_STATUS_CANT_OPEN;
+			  return 0;
+    }
+}
+
+/*
+ *  Send 'CONNECT' command to TCP socket 'sock' and wait for its completion (client mode)
+ */
+void sock_connect(socket_t *sock)
+{
+    uint8_t sock_n_register = 0;
+    uint8_t byte = 0;
+    uint8_t status = 0;
+    uint32_t timeout_start = 0;
+
+    // 1. choose appropriate socket register
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // 2. send CONNECT command
+    byte = SOCK_CMD_CONNECT;
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    // 3. wait for socket connection
+    timeout_start = _millis();
+
+    while (1)
+    {
+        // read socket status
+        _read_spi(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        // socket successfully connected
+        if (status == SOCK_STATUS_ESTABLISHED)
+        {
+            sock->status = SOCK_STATUS_ESTABLISHED;
+            break;
+        }
+
+        // handle timeout
+        if ((_millis() - timeout_start) >= SOCK_TIMEOUT_CONNECT)
+        {
+            sock->status = status;
+            break;
+        }
+    }
+}
+
+/*
+ *  Send data 'data' length of 'len' to socket 'sock'. Function automatically manages of start
+ *  and end pointers. If the data is bigger than amount of space in HW TX buffer, function
+ *  divides it into 2 parts and transmit them sequentionally (using recursive call)
+ */
+
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len)
+{
+    uint8_t sock_n_register = 0;
+    uint16_t sock_n_tx_buffer = 0;
+    uint8_t need_to_fragment = 0;
+    uint8_t *ptr_to_next_fragment = NULL;
+    uint16_t len_of_next_fragment = 0;
+    uint16_t tx_buf_free_size = 0;
+    uint16_t tx_start_ptr = 0, tx_end_ptr = 0;
+    uint8_t byte = 0;
+
+    // 1. choose appropriate socket register and TX buffer
+    sock_n_register  = sock_n_registers[sock->_id];
+    sock_n_tx_buffer = sock_n_tx_buffers[sock->_id];
+
+    // 2. check free size (2 bytes)
+    _read_spi(Sn_TX_FSR, sock_n_register, (uint8_t *)&tx_buf_free_size, sizeof(uint16_t));
+    tx_buf_free_size = SWAP_TWO_BYTES(tx_buf_free_size);
+
+    if (tx_buf_free_size < len) {
+        need_to_fragment     = 1;
+        ptr_to_next_fragment = data_t + tx_buf_free_size;
+        len_of_next_fragment = len - tx_buf_free_size;
+        len = tx_buf_free_size;
+    } else {
+        need_to_fragment = 0;
+    }
+
+    // 3. read the pointer of TX buffer (2 bytes)
+    _read_spi(Sn_TX_RD, sock_n_register, (uint8_t *)&tx_start_ptr, sizeof(uint16_t));
+//    tx_start_ptr = SWAP_TWO_BYTES(tx_start_ptr);  //->crucial - if u do this, it may invoke recursive call
+
+    // 4. write data to TX buffer (bulk, not byte by byte)
+    _write_spi(tx_start_ptr, sock_n_tx_buffer, data_t, len);
+
+    // 5. update TX_WR pointer
+    tx_end_ptr = tx_start_ptr + len;
+//    tx_end_ptr = SWAP_TWO_BYTES(tx_end_ptr);    //->crucial - if u do this, it may invoke recursive call
+    _write_spi(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_end_ptr, sizeof(uint16_t));
+
+    // 6. send command
+    switch (sock->type) {
+        case SOCK_TYPE_TCP:
+        case SOCK_TYPE_UDP:
+            byte = SOCK_CMD_SEND;
+            break;
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_CMD_SEND_MAC;
+            break;
+        default:
+            byte = 0;
+            break;
+    }
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    // 7. send remaining fragment if needed
+    if (need_to_fragment) {
+        sendto(sock, ptr_to_next_fragment, len_of_next_fragment);
+    }
+}
+
+/*
+ *  Read data from HW RX buffer of socket 'sock' into array 'buf' with size of 'buf_size'. Function
+ *  determines and returns number of bytes have been read
+ */
+
+#pragma OPTIMIZE (4)
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size)
+{
+    uint8_t sock_n_register;
+    uint16_t sock_n_rx_buffer;
+    uint16_t rx_start_ptr, rx_end_ptr;
+    uint16_t len_of_received_data;
+    uint16_t first_chunk_len, second_chunk_len;
+    uint8_t byte;
+
+    // 1. choose appropriate socket register and RX buffer
+    sock_n_register  = sock_n_registers[sock->_id];
+    sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+
+    // 2. read start and end pointers of RX buffer
+    _read_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _read_spi(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+    rx_start_ptr = SWAP_TWO_BYTES(rx_start_ptr);
+    rx_end_ptr   = SWAP_TWO_BYTES(rx_end_ptr);
+
+    // 3. calculate received data length
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0;   // no data
+    } 
+    else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr;
+        if (len_of_received_data > buf_size) {
+            return 0; // buffer too small
+        }
+
+        first_chunk_len  = 0xFFFF - rx_start_ptr;
+        second_chunk_len = rx_end_ptr;
+
+        // read first chunk
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, buf, first_chunk_len);
+
+        // read second chunk
+        _read_spi(0, sock_n_rx_buffer, buf + first_chunk_len, second_chunk_len);
+    }
+    else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+        if (len_of_received_data > buf_size) {
+            return 0; // buffer too small
+        }
+
+        // standard case
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, buf, len_of_received_data);
+    }
+
+    // 4. update RX_RD pointer
+    rx_end_ptr = SWAP_TWO_BYTES(rx_end_ptr);
+    _write_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+
+    // 5. send RECV command
+    byte = SOCK_CMD_RECV;
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+#pragma OPTIMIZE (5)
+
+/*
+ *  Read data from HW RX buffer of socket 'sock' into automatically allocated buffer associated with
+ *  pointer 'buf'. Length of data is determining and returning as uint16_t value. You can reuse the
+ *  same pointer but should free() it after last time
+ */
+#pragma OPTIMIZE (4)
+uint16_t recv_alloc(socket_t *sock, uint8_t **buf)
+{
+    uint16_t rx_start_ptr, rx_end_ptr;
+    uint16_t len_of_received_data = 0;
+    uint8_t cmd;
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    uint16_t sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+    static uint8_t rx_buf[128]; // static buffer for C51
+
+    // 1. read RX_RD and RX_WR pointers
+    _read_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _read_spi(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+    rx_start_ptr = SWAP_TWO_BYTES(rx_start_ptr);
+    rx_end_ptr   = SWAP_TWO_BYTES(rx_end_ptr);
+
+    // 2. check available data length
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0; // no data
+    }
+    else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr;
+
+        // wrap-around: read first part
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, rx_buf, (0xFFFF - rx_start_ptr));
+
+        // read second part
+        _read_spi(0, sock_n_rx_buffer, rx_buf + (0xFFFF - rx_start_ptr), rx_end_ptr);
+    }
+    else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+
+        // linear read
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, rx_buf, len_of_received_data);
+    }
+
+    // 3. return pointer to static buffer
+    *buf = rx_buf;
+
+    // 4. update RX_RD = rx_end_ptr
+    rx_end_ptr = SWAP_TWO_BYTES(rx_end_ptr);
+    _write_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+
+    // 5. issue RECV command
+    cmd = SOCK_CMD_RECV;
+    _write_spi(Sn_CR, sock_n_register, &cmd, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+#pragma OPTIMIZE (5)
+
+/*
+ *  Initiate disconnection process for TCP socket 'sock'
+ */
+void sock_discon(socket_t *sock) 
+{
+    uint8_t sock_n_register;
+    uint8_t byte;
+    uint8_t status;
+    uint32_t timeout_start;
+
+    // choose appropriate socket register
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // disconnect TCP socket
+    byte = SOCK_CMD_DISCON;
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    // check status
+    timeout_start = _millis();
+    while (1) {
+        // read status
+        _read_spi(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        // socket finally goes to the close state after successful disconnection
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        }
+        // handle timeout
+        else if ((_millis() - timeout_start) >= SOCK_TIMEOUT_DISCON) {
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+/*
+ *  Close socket 'sock' of any type
+ */
+void sock_close(socket_t *sock) 
+{
+    uint8_t sock_n_register;
+    uint8_t byte;
+    uint8_t status;
+    uint32_t timeout_start;
+
+    // choose appropriate socket register
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // close socket regardless of its type and current status
+    byte = SOCK_CMD_CLOSE;
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    timeout_start = _millis();
+    while (1) {
+        // read status
+        _read_spi(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        // operation is OK
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        }
+        // handle timeout
+        else if ((_millis() - timeout_start) >= SOCK_TIMEOUT_CLOSE) {
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+
+________________________________________
+
+main.c 
+
+#include "MS51_16K.h"
+#include "wiz_h.h"
+#include "spi.h"
+
+#define RX_BUFFER_SIZE 30
+
+uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
+uint16_t received_bytes = 0;
+
+void main(void)
+{
+    wiznet_t wiznet;
+    volatile uint8_t i = 0;    
+	  uint8_t *buf_alloc = NULL;
+    uint16_t size_t = 0;
+ 
+    uint8_t msg_udp[] = "data over UDP";
+
+    // W5500 MAC and IP config (same LAN as PC: 192.168.30.xxx)
+    uint8_t mac_addr_arr[6]   = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};  // example MAC
+    uint8_t ip_addr_arr[4]    = {192, 168, 30, 200};   								 // W5500 IP
+    uint8_t gateway_arr[4]    = {192, 168, 30, 254};   								 // same as PC gateway
+    uint8_t subnet_arr[4]     = {255, 255, 255, 0};
+    uint8_t dst_ip_arr[4]     = {192, 168, 30, 111};                   // PC IP (check with ipconfig)
+
+    socket_t socket1;
+
+    MODIFY_HIRC(HIRC_16);   // SPI based on 16MHz
+    SPI_Module_Power_ON();
+    SPI_Init(SPI_1MBPS, SPI_MODE0);
+
+    wiznet = wiznet_t_init();
+
+    for (i = 0; i < 6; i++) {
+        wiznet.mac_addr[i] = mac_addr_arr[i];
+        if (i < 4) {
+            wiznet.ip_addr[i]         = ip_addr_arr[i];
+            wiznet.ip_gateway_addr[i] = gateway_arr[i];
+            wiznet.subnet_mask[i]     = subnet_arr[i];
+        }
+    }
+
+    wiznet_init(&wiznet);
+
+    socket1 = socket_t_init();
+    socket1.type = SOCK_TYPE_UDP;
+
+    for (i = 0; i < 4; i++) {
+        socket1.ip[i] = dst_ip_arr[i];   // destination = PC
+    }
+
+    socket1.port = 1200;                 
+    socket1.dest_port = 1201;
+		
+		socket(&wiznet, &socket1);
+
+		buf_alloc = NULL;
+		debug_led(LED_OFF);
+    while (1) {
+         sendto(&socket1, msg_udp, strlen(msg_udp));   // send UDP packet
+         debug_led(LED_TOGGLE);
+			   Timer2_DELAY(DELAY_TIME,DELAY_UNIT);
+		}
+}
+
+/*
+    size_t = recv_alloc(&socket1, &buf_alloc);
+    if (size_t > 0) 
+       sendto(&socket1, buf_alloc, size_t);
+       //Timer2_DELAY(DELAY_TIME,DELAY_UNIT);
+		   debug_led(LED_TOGGLE);
+    }
+*/
+
+
+____________________________________________________________
+
+spi.c
+
+
+/*---------------------------------------------------------------------------------------------------------*/
+/*                                                                                                         */
+/* SPDX-License-Identifier: Apache-2.0                                                                     */
+/* Copyright(c) 2020 Nuvoton Technology Corp. All rights reserved.                                         */
+/*                                                                                                         */
+/*---------------------------------------------------------------------------------------------------------*/
+
+//***********************************************************************************************************
+//  Library File Function: MS51 Access SPI Flash (W25Q16BV)
+//***********************************************************************************************************
+
+#include "MS51_16K.h"
+#include "spi.h"
+
+unsigned long SPI_Init(unsigned char speed, unsigned char mode)
+{
+    unsigned long hz = 0;
+    FsysSelect(FSYS_HIRC);
+
+    P15_PUSHPULL_MODE;   // CS pin
+	  P13_PUSHPULL_MODE;   // RESET pin
+    P10_QUASI_MODE;
+    P00_QUASI_MODE;
+    P01_INPUT_MODE;
+
+    P15 = 1;             // CS high (inactive)
+	
+    set_SPSR_DISMODF;
+    clr_SPCR_SSOE;
+    set_SPCR_MSTR;
+
+    switch(mode)
+    {
+        case SPI_MODE0: clr_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE1: clr_SPCR_CPOL; set_SPCR_CPHA; break;
+        case SPI_MODE2: set_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE3: set_SPCR_CPOL; set_SPCR_CPHA; break;
+    }
+
+    if(speed == SPI_2MBPS)      
+    { 
+		   SPICLK_FSYS_DIV4;  
+		   hz = 2000000; 
+		}
+    else if(speed == SPI_1MBPS) { SPICLK_FSYS_DIV8;  hz = 1000000; }
+    else if(speed == SPI_500KBPS){ SPICLK_FSYS_DIV16; hz = 500000; }
+    else                        { SPICLK_FSYS_DIV8;  hz = 1000000; }
+
+    set_SPCR_SPIEN;
+    return hz;
+}
+
+void SPI_Initial(void)
+{
+    P15_QUASI_MODE; 
+	  P10_QUASI_MODE; 
+	  P00_QUASI_MODE; 
+	  P01_INPUT_MODE;
+    set_SPSR_DISMODF; 
+	  clr_SPCR_SSOE;
+    clr_SPCR_LSBFE; 
+	  clr_SPCR_CPOL; 
+	  clr_SPCR_CPHA;
+    set_SPCR_MSTR; 
+	  SPICLK_FSYS_DIV8; 
+	  set_SPCR_SPIEN; 
+	  clr_SPSR_SPIF;
+}
+
+void Spi_Write_Byte(unsigned char u8SpiWB)
+{
+    SPDR = u8SpiWB;
+    while(!(SPSR & 0x80));
+    clr_SPSR_SPIF;
+}
+
+unsigned char Spi_Read_Byte(unsigned char u8Data)
+{
+    SPDR = u8Data;                       // Write data (dummy or command)
+    while(!(SPSR & SET_BIT7));         // Wait until SPIF = 1 (transfer done)
+    clr_SPSR_SPIF;                     // Clear SPIF by software
+    return SPDR;                         // Read received byte
+}
+
+void SPI_Module_Power_ON(void){
+    P17_PUSHPULL_MODE;      // set pin P1.7 as push-pull output
+		P17 ^= 1;                
+}
+
+
+__________________________________________-
+
+led.c
+
+#include "MS51_16K.h"
+#include "spi.h"
+
+// Control debug LED on P0.4
+void debug_led(led_action_t action) {
+    P04_PUSHPULL_MODE;   // make sure pin is output
+
+    switch(action) {
+        case LED_OFF:
+            P04 = 0;     // or 1 if active-low
+            break;
+        case LED_ON:
+            P04 = 1;     // or 0 if active-low
+            break;
+        case LED_TOGGLE:
+            P04 ^= 1;
+            break;
+    }
+}
+
+________________________________________________
+
+timer.c
+
+#include "MS51_16K.h"
+#include "spi.h"
+
+/* Timer0 initialization */
+void Timer0_Init(void)
+{
+    TMOD &= 0xF0;        // clear Timer0 control bits
+    TMOD |= 0x01;        // Timer0 mode 1 (16-bit)
+
+    TH0 = 0xFA;          // preload for 1ms
+    TL0 = 0x2B;
+
+    ET0 = 1;             // enable Timer0 interrupt
+    TR0 = 1;             // start Timer0
+    EA  = 1;             // enable global interrupts
+}
+
+
+volatile uint16_t ms_ticks_lo = 0;
+volatile uint16_t ms_ticks_hi = 0;
+
+void Timer0_ISR(void) interrupt 1
+{
+    TF0 = 0;         // clear overflow flag
+    TH0 = 0xFA;      // reload for 1ms
+    TL0 = 0x2B;
+
+    ms_ticks_lo++;
+    if (ms_ticks_lo == 0) ms_ticks_hi++;   // handle overflow
+}
+
+uint32_t _millis(void)
+{
+    uint32_t ms;
+    EA = 0;  // disable interrupts (atomic read)
+    ms = ((uint32_t)ms_ticks_hi << 16) | ms_ticks_lo;
+    EA = 1;  // re-enable interrupts
+    return ms;
+}
+
+void _simple_delay(uint8_t delay_t)
+{
+    volatile uint8_t i, j;
+
+    for(i = 0; i < delay_t; i++)   // outer loop
+    {
+        for(j = 0; j < 255; j++)   // inner loop
+        {
+            _nop_();  // one instruction delay (intrinsic), keeps compiler from optimizing away
+        }
+    }
+}
+
+void Timer2_DELAY(unsigned int time, unsigned char unit)
+{
+    unsigned long loops = (unit == DELAY_UNIT_MS) ? time : (time * 1000UL);
+    unsigned long i;
+
+    for (i = 0; i < loops; i++)
+    {
+        T2MOD = 0x00;       // normal mode
+        RCMP2H = 0xC1;
+        RCMP2L = 0x80;
+        TH2 = 0xC1;
+        TL2 = 0x80;
+        TF2 = 0;
+        TR2 = 1;
+        while(!TF2);
+        TF2 = 0;
+        TR2 = 0;
+    }
+}
+
+
+______________________________________________________
+
+spi.h
+
+
+#ifndef a123
+#define a123
+
+#define SPI_2MBPS   2
+#define SPI_1MBPS   1
+#define SPI_500KBPS 5
+
+#define SPI_MODE0   0
+#define SPI_MODE1   1
+#define SPI_MODE2   2
+#define SPI_MODE3   3
+
+#define SS_PIN                  P15
+
+void SPI_Initial(void);
+extern void Spi_Write_Byte(unsigned char u8SpiWB);
+extern unsigned char Spi_Read_Byte(unsigned char u8SpiWB);
+
+uint32_t _millis(void);
+void _simple_delay(uint8_t delay_t);
+
+// Define LED actions
+typedef enum {
+    LED_OFF = 0,
+    LED_ON,
+    LED_TOGGLE
+} led_action_t;
+
+void debug_led(led_action_t action);
+
+void SPI_Module_Power_ON(void);
+
+unsigned long SPI_Init(unsigned char speed, unsigned char mode);
+
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+#define DELAY_UNIT_MS   1
+#define DELAY_UNIT_SEC  2
+#define DELAY_TIME      1               // default 1 second
+#define DELAY_UNIT      DELAY_UNIT_SEC  // DELAY_UNIT_MS or DELAY_UNIT_SEC
+
+#endif
+
+________________________________________
+
+
+wiznet.h
+
+
+#ifndef WIZNET_H_
+#define WIZNET_H_
+
+#include "wiz_h.h"
+#include <stdlib.h>
+#include <stdbool.h>
+#include "function_define_ms51_16k.h"
+
+void Timer0_Init(void);
+
+/*
+ *  This macro allows us to declare and use 2-bytes-variables in their natural
+ *  form and read/write in correct Wiznet byte-ordering
+ *
+ *    ex.1:
+ *          uint16_t port = 1200;
+ *          printf("Port: %d\n", port);
+ *          port = SWAP_TWO_BYTES(port);
+ *          _write_spi( ... , (uint8_t *)&port, sizeof(uint16_t) );
+ *
+ *    ex.2:
+ *          uint16_t port;
+ *          _read_spi( ... , (uint8_t *)&port, sizeof(uint16_t) );
+ *          port = SWAP_TWO_BYTES(port);
+ *          printf("Port: %d\n", port);
+ *
+ */
+#define SWAP_TWO_BYTES(X) ((((X)&(0xFF00))>>8)|(((X)&(0x00FF))<<8))
+
+
+// Number of Wiznets
+#define NUM_OF_WIZNETS 1
+
+// Number of sockets available. You should also adjust sock_n_* arrays if you
+// change this
+#define NUM_OF_SOCKETS 8
+
+
+// Read/Write Bit of Control Phase
+#define RWB 2
+
+
+/*
+ *  BSB[4:0] bits of Control Phase
+ */
+#define COMMON_REGISTERS 0x00
+
+// Mode Register and its bits
+#define MR 0x0000  // 1 byte
+// #define MR_RST 7  // SW reset ('1' for reset, wait until '0')
+// #define WOL 5  // Wake on LAN
+// #define PB 4  // Ping Block ('0' - disable ping block)
+// #define PPPoE 3  // set this to '1' for ADSL
+// #define FARP 1  // set this to '1' to force sending ARP requests
+
+#define GAR 0x0001  // Gateway IP Address Register (4 bytes)
+#define SUBR 0x0005  // Subnet Mask Register (4 bytes)
+#define SHAR 0x0009  // Source MAC-address Register (6 bytes)
+#define SIPR 0x000F  // Source IP Address Register (4 bytes)
+
+/*
+ *  Interrupt Assert Wait Time, i.e. pause after clearing first interrupt, and
+ *  second was triggered when first hasn't been handled completely. After Iawt
+ *  time, INTn pin will fire again so you can handle this second interrupt too
+ */
+#define INTLEVEL 0x0013  // 2 bytes
+
+// #define IR 0x0015  // Interrupt Register (1 byte)
+// #define IMR 0x0016  // Interrupt Mask Register (1 byte)
+#define SIR 0x0017  // Socket Interrupt Register (1 byte)
+#define SIMR 0x0018  // Socket Interrupt Mask Register (1 byte)
+
+// PHY Configuration Register and its bits
+#define PHYCFGR 0x002E  // 1 byte
+#define PHYCFGR_RST 7  // check this bit to know when reset is completed
+#define LNK 0  // check this bit to know whether PHY link is up
+
+#define VERSIONR 0x0039  // HW version (always equals to '4')
+
+
+/*
+ *  BSB[4:0] bits of Control Phase
+ */
+#define SOCKET_0_REGISTERS 0x01
+#define SOCKET_0_TX_BUFFER 0x02
+#define SOCKET_0_RX_BUFFER 0x03
+
+#define SOCKET_1_REGISTERS 0x05
+#define SOCKET_1_TX_BUFFER 0x06
+#define SOCKET_1_RX_BUFFER 0x07
+
+#define SOCKET_2_REGISTERS 0x09
+#define SOCKET_2_TX_BUFFER 0x0A
+#define SOCKET_2_RX_BUFFER 0x0B
+
+#define SOCKET_3_REGISTERS 0x0D
+#define SOCKET_3_TX_BUFFER 0x0E
+#define SOCKET_3_RX_BUFFER 0x0F
+
+#define SOCKET_4_REGISTERS 0x11
+#define SOCKET_4_TX_BUFFER 0x12
+#define SOCKET_4_RX_BUFFER 0x13
+
+#define SOCKET_5_REGISTERS 0x15
+#define SOCKET_5_TX_BUFFER 0x16
+#define SOCKET_5_RX_BUFFER 0x17
+
+#define SOCKET_6_REGISTERS 0x19
+#define SOCKET_6_TX_BUFFER 0x1A
+#define SOCKET_6_RX_BUFFER 0x1B
+
+#define SOCKET_7_REGISTERS 0x1D
+#define SOCKET_7_TX_BUFFER 0x1E
+#define SOCKET_7_RX_BUFFER 0x1F
+
+
+// Mode Register and its bits
+#define Sn_MR 0x0000  // 1 byte
+// #define MULTI_MFEN 7
+// #define BCASTB 6
+// #define ND_MC_MMB 5
+// #define UCASTB_MIP6B 4
+#define SOCK_TYPE_CLOSED 0x00
+
+typedef enum SockType {
+    SOCK_TYPE_TCP    = 0x01,   // 0001b
+    SOCK_TYPE_UDP    = 0x02,   // 0010b
+    SOCK_TYPE_MACRAW = 0x04    // 0100b
+} sock_type_t;
+
+// Socket Command Register
+#define Sn_CR 0x0001  // 1 byte
+typedef enum SockCmd {
+    SOCK_CMD_OPEN=0x01,
+    SOCK_CMD_LISTEN=0x02,
+    SOCK_CMD_CONNECT=0x04,
+    SOCK_CMD_DISCON=0x08,
+    SOCK_CMD_CLOSE=0x10,
+    SOCK_CMD_SEND=0x20,
+    SOCK_CMD_SEND_MAC=0x21,
+    SOCK_CMD_SEND_KEEP=0x22,
+    SOCK_CMD_RECV=0x40
+} sock_cmd_t;
+
+// Socket Interrupt Register
+#define Sn_IR 0x0002  // 1 byte
+typedef enum SockISRType {
+    SOCK_IR_CON,
+    SOCK_IR_DISCON,
+    SOCK_IR_RECV,
+    SOCK_IR_TIMEOUT,
+    SOCK_IR_SEND_OK,
+
+    // not wiznet value, just for our needs
+    NUM_OF_SOCK_IRS
+} sock_isr_type_t;
+
+// Socket Interrupt Mask Register (1 byte)
+// #define Sn_IMR 0x002C  // default to 0xFF - i.e all interrupts enabled
+
+// Socket Status Register
+#define Sn_SR 0x0003  // 1 byte
+typedef enum SockStatus {
+    SOCK_STATUS_CLOSED=0x00,
+    SOCK_STATUS_INIT=0x13,
+    SOCK_STATUS_LISTEN=0x14,
+    SOCK_STATUS_ESTABLISHED=0x17,
+    SOCK_STATUS_CLOSE_WAIT=0x1C,
+    SOCK_STATUS_UDP=0x22,
+    SOCK_STATUS_MACRAW=0x42,
+
+    // not wiznet values, just for our needs
+    SOCK_STATUS_NUM_EXCEEDED=-2,
+    SOCK_STATUS_MACRAW_TAKEN=-3,
+    SOCK_STATUS_CANT_OPEN=-4,
+    SOCK_STATUS_CANT_CLOSE=-5
+} sock_status_t;
+
+#define Sn_PORT 0x0004  // incoming port (2 bytes)
+#define Sn_DHAR 0x0006  // destination MAC address (bypass ARP) (6 bytes)
+#define Sn_DIPR 0x000C  // destination IP address (4 bytes)
+#define Sn_DPORT 0x0010  // destination port (2 bytes)
+
+#define Sn_MSSR 0x0012  // Maximum Segment Size (2 bytes)
+
+#define Sn_TX_FSR 0x0020  // TX buffer Free Size Register (2 bytes)
+#define Sn_TX_RD 0x0022  // TX buffer start pointer (2 bytes)
+#define Sn_TX_WR 0x0024  // TX buffer end pointer (2 bytes)
+
+#define Sn_RX_RSR 0x0026  // RX buffer Received Size Register (2 bytes)
+#define Sn_RX_RD 0x0028  // RX buffer start pointer (2 bytes)
+#define Sn_RX_WR 0x002A  // RX buffer end pointer (2 bytes)
+
+typedef struct Wiznet wiznet_t;
+
+typedef struct Socket socket_t;
+
+/*
+ *  Struct representing single Wiznet
+ */
+typedef struct Wiznet {
+    // private members
+    int8_t  _id;
+    uint8_t _sockets_cnt;      // <--- add underscore
+    uint8_t _sockets_taken;    // <--- a       // bit mask (0b01010101 for 8 sockets)
+    socket_t *_sockets[NUM_OF_SOCKETS];
+
+    // platform-specific definitions (MS51)
+    uint8_t CS_Port;   // which port (e.g., 0 for P0, 1 for P1, etc.)
+    uint8_t CS_Pin;    // pin number (0?7)
+    uint8_t RST_Port;  // reset pin port
+    uint8_t RST_Pin;   // reset pin number
+
+    // public members
+    uint8_t mac_addr[6];
+    uint8_t ip_addr[4];
+    uint8_t ip_gateway_addr[4];
+    uint8_t subnet_mask[4];
+} Wiznet;
+
+/*
+ *  Struct representing socket of any type - UDP, TCP or MACRAW (pure Ethernet)
+ */
+struct Socket {
+    // private members
+    int8_t _id;  // ID is assigned by socket() function after successful creation.
+                 // ID is equal to Wiznet's HW sockets 0-7
+    wiznet_t *_host_wiznet;  // pointer to the Wiznet structure that hosted
+                             // this socket
+
+    // public members
+    uint8_t type;
+    sock_status_t status;
+    uint8_t ip[4];
+    uint16_t port;        // source port (local)
+    uint16_t dest_port;   // destination port (remote)
+    uint8_t macraw_dst[6];
+};
+
+/*---------------------------------------------------------------------------------------------------------*/
+/*                                         Wiznet Public Functions                                         */
+/*---------------------------------------------------------------------------------------------------------*/
+
+/* Wiznet management */
+wiznet_t wiznet_t_init(void);
+int32_t wiznet_init(wiznet_t *wiznet);
+void wiznet_deinit(wiznet_t *wiznet);
+void wiznet_hw_reset(void);
+uint8_t wiznet_get_version(void);
+void wiznet_isr_handler(wiznet_t *wiznet);
+
+/*---------------------------------------------------------------------------------------------------------*/
+/*                                         Socket Public Functions                                         */
+/*---------------------------------------------------------------------------------------------------------*/
+
+/* Socket management */
+socket_t socket_t_init(void);
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock);
+void sock_reset(socket_t *sock);
+void sock_deinit(socket_t *sock);
+
+/* Socket operations */
+uint8_t sock_open(socket_t *sock);
+void sock_connect(socket_t *sock);
+void sock_discon(socket_t *sock);
+void sock_close(socket_t *sock);
+
+/* Data transmission */
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len);
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size);
+uint16_t recv_alloc(socket_t *sock, uint8_t **buf);
+
+#endif /* WIZNET_H_ */
+
+
+_________________________________________________________________
