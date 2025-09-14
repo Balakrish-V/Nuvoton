@@ -1,0 +1,658 @@
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len)
+{
+    uint8_t sock_n_register = 0;
+    uint16_t sock_n_tx_buffer = 0;
+    uint8_t need_to_fragment = 0;
+    uint8_t *ptr_to_next_fragment = NULL;
+    uint16_t len_of_next_fragment = 0;
+    uint16_t tx_buf_free_size = 0;
+    uint16_t tx_start_ptr = 0, tx_end_ptr = 0;
+    uint8_t byte = 0;
+
+    // 1. choose appropriate socket register and TX buffer
+    sock_n_register  = sock_n_registers[sock->_id];
+    sock_n_tx_buffer = sock_n_tx_buffers[sock->_id];
+
+    // 2. check free size (2 bytes)
+    _read_spi(Sn_TX_FSR, sock_n_register, (uint8_t *)&tx_buf_free_size, sizeof(uint16_t));
+    tx_buf_free_size = SWAP_TWO_BYTES(tx_buf_free_size);
+
+    if (tx_buf_free_size < len) {
+        need_to_fragment     = 1;
+        ptr_to_next_fragment = data_t + tx_buf_free_size;
+        len_of_next_fragment = len - tx_buf_free_size;
+        len = tx_buf_free_size;
+    } else {
+        need_to_fragment = 0;
+    }
+
+    // 3. read the TX write pointer (not read pointer!)
+    _read_spi(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_start_ptr, sizeof(uint16_t));
+//    tx_start_ptr = SWAP_TWO_BYTES(tx_start_ptr);  //->crucial - if u do this, it may invoke recursive call
+
+    // 4. write data to TX buffer (bulk, not byte by byte)
+    _write_spi(tx_start_ptr, sock_n_tx_buffer, data_t, len);
+
+    // 5. update TX_WR pointer
+    tx_end_ptr = tx_start_ptr + len;
+//    tx_end_ptr = SWAP_TWO_BYTES(tx_end_ptr);    //->crucial - if u do this, it may invoke recursive call
+    _write_spi(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_end_ptr, sizeof(uint16_t));
+
+    // 6. send command
+    switch (sock->type) {
+        case SOCK_TYPE_TCP:
+        case SOCK_TYPE_UDP:
+            byte = SOCK_CMD_SEND;
+            break;
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_CMD_SEND_MAC;
+            break;
+        default:
+            byte = 0;
+            break;
+    }
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    // 7. send remaining fragment if needed
+    if (need_to_fragment) {
+        sendto(sock, ptr_to_next_fragment, len_of_next_fragment);
+    }
+}
+
+/*
+ *  Read data from HW RX buffer of socket 'sock' into array 'buf' with size of 'buf_size'. Function
+ *  determines and returns number of bytes have been read
+ */
+
+#pragma OPTIMIZE (4)
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size)
+{
+    uint8_t sock_n_register;
+    uint16_t sock_n_rx_buffer;
+    uint16_t rx_start_ptr, rx_end_ptr;
+    uint16_t len_of_received_data;
+    uint16_t first_chunk_len, second_chunk_len;
+    uint8_t byte;
+
+    // 1. choose appropriate socket register and RX buffer
+    sock_n_register  = sock_n_registers[sock->_id];
+    sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+
+    // 2. read start and end pointers of RX buffer
+    _read_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _read_spi(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+//    rx_start_ptr = SWAP_TWO_BYTES(rx_start_ptr);  //->crucial - if u do this, it causes issues
+//    rx_end_ptr   = SWAP_TWO_BYTES(rx_end_ptr);    //->crucial - if u do this, it causes issues
+
+    // 3. calculate received data length
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0;   // no data
+    } 
+    else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr + 1;  // Fixed calculation
+        if (len_of_received_data > buf_size) {
+            len_of_received_data = buf_size; // Read only what fits, don't return 0
+        }
+
+        first_chunk_len  = 0xFFFF - rx_start_ptr + 1;  // Fixed calculation
+        if (first_chunk_len > len_of_received_data) {
+            first_chunk_len = len_of_received_data;
+            second_chunk_len = 0;
+        } else {
+            second_chunk_len = len_of_received_data - first_chunk_len;
+        }
+
+        // read first chunk
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, buf, first_chunk_len);
+
+        // read second chunk if needed
+        if (second_chunk_len > 0) {
+            _read_spi(0, sock_n_rx_buffer, buf + first_chunk_len, second_chunk_len);
+        }
+    }
+    else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+        if (len_of_received_data > buf_size) {
+            len_of_received_data = buf_size; // Read only what fits, don't return 0
+        }
+
+        // standard case
+        _read_spi(rx_start_ptr, sock_n_rx_buffer, buf, len_of_received_data);
+    }
+
+    // 4. update RX_RD pointer to the new position
+    rx_start_ptr = rx_start_ptr + len_of_received_data;
+    _write_spi(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+
+    // 5. send RECV command
+    byte = SOCK_CMD_RECV;
+    _write_spi(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+#pragma OPTIMIZE (5)
+
+the sending and receiving functions had certain bugs that needed some fixing and it is fixed. but if we need to use the
+other functions such as recv_alloc or something like this, then we need to fix the bugs in them. also the while(1) is also
+modified based on the requirement.
+/*
+
+The key fixes that made the difference were:
+
+Using Sn_TX_WR instead of Sn_TX_RD in the sendto function - that was crucial for writing to the correct buffer location
+Sending only received_bytes instead of the entire buffer size - this prevented sending garbage data
+
+*/
+
+/*
+also in the reference git link, the ussseerrrr has also given some issues that he has fixed. So keep that in mind also. 
+*/
+
+/*
+suppose if the udp packets are not receving then, there is a higher probability that it is a code issue.
+the udp packets were receiving in the "usr tcp test" application despite the system having firewall kept on.
+*/
+
+////////////////////////////////udp main.c/////////////////////////
+
+#include "MS51_16K.h"
+#include "wiz_h.h"
+#include "spi.h"
+
+#define RX_BUFFER_SIZE 30
+
+uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
+uint16_t received_bytes = 0;
+
+void main(void)
+{
+    wiznet_t wiznet;
+    volatile uint8_t i = 0;  
+    uint16_t size_t = 0;
+ 
+    uint8_t msg_udp[] = "Hello_World\n";
+
+    uint8_t *actual_data = NULL;
+    uint16_t actual_len = 0;
+        
+    // W5500 MAC and IP config (same LAN as PC: 192.168.30.xxx)
+    uint8_t mac_addr_arr[6]   = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};  // example MAC
+    uint8_t ip_addr_arr[4]    = {192, 168, 30, 200};   								 // W5500 IP
+    uint8_t gateway_arr[4]    = {192, 168, 30, 254};   								 // same as PC gateway
+    uint8_t subnet_arr[4]     = {255, 255, 255, 0};
+    uint8_t dst_ip_arr[4]     = {192, 168, 30, 111};                   // PC IP (check with ipconfig)
+
+    socket_t socket1;
+
+    MODIFY_HIRC(HIRC_16);   // SPI based on 16MHz
+    SPI_Module_Power_ON();
+    SPI_Init(SPI_1MBPS, SPI_MODE0);
+
+    wiznet = wiznet_t_init();
+
+    for (i = 0; i < 6; i++) {
+        wiznet.mac_addr[i] = mac_addr_arr[i];
+        if (i < 4) {
+            wiznet.ip_addr[i]         = ip_addr_arr[i];
+            wiznet.ip_gateway_addr[i] = gateway_arr[i];
+            wiznet.subnet_mask[i]     = subnet_arr[i];
+        }
+    }
+
+    wiznet_init(&wiznet);
+
+    socket1 = socket_t_init();
+    socket1.type = SOCK_TYPE_UDP;
+
+    for (i = 0; i < 4; i++) {
+        socket1.ip[i] = dst_ip_arr[i];   // destination = PC
+    }
+
+    socket1.port = 1200;                 
+    socket1.dest_port = 1201;
+		
+		socket(&wiznet, &socket1);
+
+		debug_led(LED_OFF);
+		sendto(&socket1, "\r\nHey there, I am using UDP\r\n", sizeof("\r\nHey there, I am using UDP\r\n"));
+    
+		/********** BASIC LOOPBACK USING UDP  ***************/
+		
+    while (1) {
+    memset(rx_buffer, 0, RX_BUFFER_SIZE);
+    received_bytes = recv(&socket1, rx_buffer, RX_BUFFER_SIZE);
+    if(received_bytes > 0){
+			// for UDP, you might need to skip the UDP header (typically 8 bytes)
+      // check if the first few bytes look like header data
+        
+        actual_data = rx_buffer;
+        actual_len = received_bytes;
+        
+        if (socket1.type == SOCK_TYPE_UDP && received_bytes > 8) {
+					// UDP header is typically 8 bytes, but check your specific implementation
+          // we need to adjust this offset based on your network stack
+
+            actual_data = rx_buffer + 8;  // Skip potential UDP header
+            actual_len = received_bytes - 8;
+        }
+				
+        sendto(&socket1, actual_data, actual_len);
+        debug_led(LED_TOGGLE);
+			}
+		}
+}
+/*thoery*/
+
+UDP
+
+Byte 0-1: Source Port      (2 bytes)
+Byte 2-3: Destination Port (2 bytes)  
+Byte 4-5: Length          (2 bytes)
+Byte 6-7: Checksum        (2 bytes)
+Byte 8+:  Your Data Starts Here
+
+rx_buffer[0]:  Source Port (high byte)
+rx_buffer[1]:  Source Port (low byte)  
+rx_buffer[2]:  Dest Port (high byte)
+rx_buffer[3]:  Dest Port (low byte)
+rx_buffer[4]:  UDP Length (high byte)
+rx_buffer[5]:  UDP Length (low byte)
+rx_buffer[6]:  Checksum (high byte)
+rx_buffer[7]:  Checksum (low byte)
+rx_buffer[8]:  'H' ← actual_data points here
+rx_buffer[9]:  'e'
+rx_buffer[10]: 'l'
+...and so on
+
+
+received_bytes = recv(&socket2, rx_buffer, RX_BUFFER_SIZE);
+// received_bytes = 19
+
+if (received_bytes > 8) {  // Must have at least UDP header
+    // Skip UDP header to get actual data
+    actual_data = rx_buffer + 8;        // Move pointer past header
+    actual_len = received_bytes - 8;    // Subtract header size
+    
+    // Now actual_data points to pure application data
+    // actual_len contains only application data length
+    sendto(&socket2, actual_data, actual_len);
+}
+
+
+
+
+////////////////////////////////tcp main.c///////////////////////////////
+
+#include "MS51_16K.h" 
+#include "wiz_h.h" 
+#include "spi.h" 
+ 
+#define RX_BUFFER_SIZE 30 
+ 
+uint8_t rx_buffer[RX_BUFFER_SIZE] = {0}; 
+uint16_t received_bytes = 0; 
+ 
+void main(void) 
+{ 
+    wiznet_t wiznet; 
+    volatile uint8_t i = 0;   
+    uint16_t size_t = 0; 
+ 
+    uint8_t *actual_data = NULL; 
+    uint16_t actual_len = 0; 
+         
+    // W5500 MAC and IP config (same LAN as PC: 192.168.30.xxx) 
+    uint8_t mac_addr_arr[6]   = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};  // example MAC 
+    uint8_t ip_addr_arr[4]    = {192, 168, 30, 208};   								 // W5500 IP 
+    uint8_t gateway_arr[4]    = {192, 168, 30, 254};   								 // same as PC gateway 
+    uint8_t subnet_arr[4]     = {255, 255, 255, 0}; 
+    uint8_t dst_ip_arr[4]     = {192, 168, 30, 111};                   // PC IP (check with ipconfig) 
+ 
+    socket_t socket2; 
+ 
+    MODIFY_HIRC(HIRC_16);   // SPI based on 16MHz 
+    SPI_Module_Power_ON(); 
+    SPI_Init(SPI_1MBPS, SPI_MODE0); 
+ 
+    wiznet = wiznet_t_init(); 
+ 
+    for (i = 0; i < 6; i++) { 
+        wiznet.mac_addr[i] = mac_addr_arr[i]; 
+        if (i < 4) { 
+            wiznet.ip_addr[i]         = ip_addr_arr[i]; 
+            wiznet.ip_gateway_addr[i] = gateway_arr[i]; 
+            wiznet.subnet_mask[i]     = subnet_arr[i]; 
+        } 
+    } 
+ 
+    wiznet_init(&wiznet); 
+ 
+    socket2 = socket_t_init(); 
+    socket2.type = SOCK_TYPE_TCP; 
+ 
+    for (i = 0; i < 4; i++) { 
+        socket2.ip[i] = dst_ip_arr[i];   // destination = PC 
+    } 
+ 
+    socket2.port = 1300;                  
+    socket2.dest_port = 1301; 
+		 
+		socket(&wiznet, &socket2); 
+ 
+		debug_led(LED_OFF); 
+		sendto(&socket2, "\r\nHey there, I am using TCP\r\n", sizeof("\r\nHey there, I am using TCP\r\n")); 
+     
+		/********** BASIC LOOPBACK USING TCP  ***************/ 
+		 
+    while (1) { 
+        memset(rx_buffer, 0, RX_BUFFER_SIZE); 
+        received_bytes = recv(&socket2, rx_buffer, RX_BUFFER_SIZE); 
+        if(received_bytes > 0){ 
+            // TCP provides a clean data stream - no protocol headers in application data
+            // The W5500 TCP stack handles all header processing internally
+            // recv() returns only the actual payload data sent by the remote host
+             
+            actual_data = rx_buffer; 
+            actual_len = received_bytes; 
+             
+            // No header stripping needed for TCP - data is already clean
+            // Unlike UDP which may include header information in some implementations,
+            // TCP recv() gives us pure application data
+				 
+            sendto(&socket2, actual_data, actual_len); 
+            debug_led(LED_TOGGLE); 
+		} 
+	} 
+}
+
+
+////theory/////
+
+Application sends: "Hello World" (11 bytes)
+TCP Stack does:   - Splits into segments if needed
+                  - Adds 20-byte TCP header to each segment  
+                  - Manages sequence numbers
+                  - Handles retransmissions
+                  - Reassembles at receiver
+Application gets: "Hello World" (11 bytes, clean)
+
+
+
+┌──────────────────────────────────────────────────────┐
+│                 TCP Header (20+ bytes)               │
+├─────────┬─────────┬─────────┬─────────┬──────────────┤
+│Src Port │Dst Port │Seq Num  │Ack Num  │Flags & More  │
+│(2 bytes)│(2 bytes)│(4 bytes)│(4 bytes)│   (8+ bytes) │
+├─────────┴─────────┴─────────┴─────────┴──────────────┤
+│                Your Data                             │
+│              "Hello World"                           │
+└──────────────────────────────────────────────────────┘
+     ↑                            ↑
+Application never sees this    Application data
+
+
+Bytes 0-1:   Source Port
+Bytes 2-3:   Destination Port  
+Bytes 4-7:   Sequence Number      ← Critical for ordering
+Bytes 8-11:  Acknowledgment Number ← Critical for reliability
+Bytes 12-13: Header Length + Flags ← Controls connection state
+Bytes 14-15: Window Size           ← Flow control
+Bytes 16-17: Checksum             ← Data integrity  
+Bytes 18-19: Urgent Pointer       ← Rarely used
+Bytes 20+:   Options (variable)    ← MSS, timestamps, etc.
+
+//////////overall insights of the code/////////////////////
+
+Document 
+The key insight is that the W5500 is a hardware TCP/IP stack chip - the TCP processing happens in dedicated silicon inside the W5500, not in your microcontroller software.
+
+Your recv() function is essentially a buffer management interface that:
+
+Reads buffer pointers from W5500 registers (where hardware has placed processed data)
+Copies clean data from W5500's internal SRAM to your buffer via SPI
+Updates pointers to tell the W5500 hardware you've consumed the data
+The actual TCP stack (sequence numbers, acknowledgments, retransmissions, header processing, packet reordering, etc.) all happens automatically in the W5500's dedicated hardware engine. By the time your recv() function runs, the W5500 has already:
+
+Stripped all protocol headers (Ethernet, IP, TCP)
+Verified checksums
+Handled acknowledgments and retransmissions
+Reordered any out-of-sequence packets
+Stored only the pure application data in its internal RX buffer
+
+________________________________________________________________
+
+The W5500 has its own internal processor/controller running dedicated TCP/IP firmware.
+Think of it like this:
+Your Setup = Two Processors Working Together:
+
+MS51 Processor: Runs your application code, handles SPI communication
+W5500 Processor: Runs TCP/IP stack firmware, handles all networking
+
+The W5500 isn't just a "dumb" SPI peripheral - it's actually a complete networking coprocessor with:
+
+Its own CPU core (likely ARM Cortex-M0 or similar)
+Its own firmware running TCP/IP protocols
+Its own real-time scheduler handling network tasks
+Its own timers for TCP timeouts and retransmissions
+
+Parallel Processing:
+While your MS51 is running your main() loop and application logic, the W5500's internal processor is simultaneously:
+
+Processing incoming Ethernet packets
+Managing TCP state machines for 8 sockets
+Handling automatic ACK generation
+Running retransmission timers
+Managing flow control
+
+This is why the W5500 approach is so powerful - you get dedicated networking hardware that never interferes with your main application timing, and your main MCU never gets interrupted by network processing tasks.
+It's like having a specialized network engineer (W5500) handling all the networking while your main developer (MS51) focuses purely on application logic!
+
+
+┌─────────────────────────────────────────────────────────────┐
+│                    MS51 Microcontroller                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │                 8051 Core                              │ │
+│  │                                                         │ │
+│  │ Running YOUR code:                                      │ │
+│  │ • main() function                                       │ │
+│  │ • recv() function                                       │ │
+│  │ • sendto() function                                     │ │
+│  │ • Application logic                                     │ │
+│  │ • SPI communication                                     │ │
+│  │                                                         │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │ SPI Commands
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      W5500 Chip                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │            W5500 Internal Processor                     ││
+│  │                                                         ││
+│  │ Running WIZNET firmware:                                ││
+│  │ • TCP connection management                             ││
+│  │ • Packet processing                                     ││
+│  │ • Automatic ACK generation                              ││
+│  │ • Retransmission handling                               ││
+│  │ • Buffer management                                     ││
+│  │ • Network interrupts                                    ││
+│  │                                                         ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+
+inside the w5500 these many things happen
+
+┌─────────────────────────────────────────────────────────────┐
+│            W5500 Internal Firmware Tasks                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ Network Receive Task:                                       │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ while(1) {                                              │ │
+│ │   if (ethernet_packet_received()) {                     │ │
+│ │     parse_ethernet_header();                            │ │
+│ │     if (is_ip_packet()) {                               │ │
+│ │       parse_ip_header();                                │ │
+│ │       if (is_tcp_packet()) {                            │ │
+│ │         process_tcp_segment();                          │ │
+│ │         update_tcp_state_machine();                     │ │
+│ │         generate_ack_if_needed();                       │ │
+│ │         store_data_in_socket_buffer();                  │ │
+│ │       }                                                 │ │
+│ │     }                                                   │ │
+│ │   }                                                     │ │
+│ │ }                                                       │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ Timer Task (for TCP timeouts):                              │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ while(1) {                                              │ │
+│ │   for (each_socket) {                                   │ │
+│ │     check_retransmission_timeout();                     │ │
+│ │     check_keepalive_timeout();                          │ │
+│ │     check_connection_timeout();                         │ │
+│ │   }                                                     │ │
+│ │   delay(10ms);                                          │ │
+│ │ }                                                       │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ SPI Command Handler:                                        │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ interrupt spi_command_received() {                      │ │
+│ │   switch(command) {                                     │ │
+│ │     case READ_BUFFER:                                   │ │
+│ │       return_socket_buffer_data();                      │ │
+│ │     case WRITE_REGISTER:                                │ │
+│ │       update_configuration();                           │ │
+│ │     case SOCKET_COMMAND:                                │ │
+│ │       execute_socket_operation();                       │ │
+│ │   }                                                     │ │
+│ │ }                                                       │ │
+│ └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+
+Your MS51:                           W5500 Internal Processor:
+┌─────────────────────────────────┐  ┌─────────────────────────────────┐
+│                                 │  │                                 │
+│ recv() function starts          │  │ Continuously running:           │
+│   │                             │  │                                 │
+│   ├─ read_spi(Sn_RX_RD...)      │──┼─▶ Handles SPI interrupt         │
+│   │                             │  │   Returns buffer pointer        │
+│   │                             │  │                                 │
+│   ├─ read_spi(Sn_RX_WR...)      │──┼─▶ Handles SPI interrupt         |
+│   │                             │  │   Returns buffer pointer        │
+│   │                             │  │                                 │
+│   ├─ Calculate data length      │  │ Meanwhile:                      │
+│   │                             │  │ • Processing incoming packets   │
+│   │                             │  │ • Managing TCP timers           │
+│   ├─ read_spi(buffer_data...)   │──┼─▶ Returns processed TCP data    │
+│   │                             │  │ • Sending ACKs automatically    │
+│   │                             │  │ • Handling retransmissions      │
+│   ├─ write_spi(new_RX_RD...)    │──┼─▶ Updates internal pointers     │
+│   │                             │  │                                 │
+│   └─ write_spi(SOCK_CMD_RECV)   │──┼─▶ Processes receive command     │
+│                                 │  │                                 │
+│ recv() function ends            │  │ Continues running...            │
+└─────────────────────────────────┘  └─────────────────────────────────┘
+
+
+
+
+
+
+
+//////**** TRADE_OFF_of_using_LwIP+MCU or_W5500+MCU *******\\\\\\
+
+Hardware vs Software TCP Stack: Simple Comparison
+Hardware Stack (W5500)
+Like hiring a networking expert:
+
+✅ Easy: Just send/receive data, chip handles everything
+✅ Fast: Your main processor never gets interrupted
+✅ Cheap processing: Small microcontroller can do the job
+❌ Expensive: Need extra chip ($5-10)
+❌ Limited: Can't change how networking works
+❌ Fixed: Only 8 connections max
+
+Software Stack (LwIP)
+Like learning networking yourself:
+
+✅ Flexible: You control everything, can customize
+✅ Cheap hardware: No extra chips needed
+✅ Unlimited: As many connections as you want
+❌ Complex: Much harder to program
+❌ Slow: Takes lots of processor power
+❌ Memory hungry: Needs lots of RAM
+
+Choose Hardware Stack If:
+
+Simple send/receive data
+Want it to "just work"
+Small project budget (time)
+Real-time control (robots, motors)
+
+Choose Software Stack If:
+
+Need custom networking features
+Building web servers or complex apps
+Want to understand/debug networking
+High-volume production (save $5/unit)
+
+Bottom line: Hardware = Easy but limited. Software = Powerful but complex.
+
+____________________________________________________________________
+TCP Gaming (Bad):
+Player presses "JUMP" → Wait for server confirmation → Jump happens
+Result: 200ms delay, laggy gameplay
+
+UDP Gaming (Good):  
+Player presses "JUMP" → Immediately send packet → Jump happens
+Result: 20ms delay, smooth gameplay
+Note: If one "jump" packet lost, who cares? Next position update will correct it
+
+TCP Video (Bad):
+Frame 100 gets lost → Stop everything → Resend frame 100 → Continue
+Result: Video freezes waiting for old frame
+
+UDP Video (Good):
+Frame 100 gets lost → Skip it → Show frame 101, 102, 103...
+Result: Maybe one tiny glitch, but video keeps playing
+
+UDP File (Bad):
+Download 1000 packets → 3 packets lost → File corrupted → Useless
+
+TCP File (Good):
+Download 1000 packets → 3 packets lost → Auto-resend → Perfect file
+Result: File is exactly as intended
+
+UDP Web (Bad):
+Request webpage → Some HTML lost → Broken webpage displayed
+
+TCP Web (Good):
+Request webpage → All HTML received → Perfect webpage displayed
+_______________________________________________________________________
+
+TCP = Your Careful Friend
+
+Writes down everything you say
+Confirms they heard you correctly
+Asks you to repeat if they missed something
+Remembers the conversation order perfectly
+Slower but never forgets
+
+UDP = Your Casual Friend
+
+Listens while doing other things
+Might miss what you said
+Won't ask you to repeat
+Responds immediately to what they caught
+Fast but might miss details
+
+Bottom Line: TCP = Reliable but slow. UDP = Fast but unreliable. 
+Choose based on whether you need guaranteed delivery or speed.
+
+_________________________________________________________________________
