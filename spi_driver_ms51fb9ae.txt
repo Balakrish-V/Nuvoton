@@ -1,0 +1,72 @@
+#include "MS51_16K.h"
+
+#define WIZNET_CS_LOW()   (P15 = 0)
+#define WIZNET_CS_HIGH()  (P15 = 1)
+
+#define SPI_2MBPS   2
+#define SPI_1MBPS   1
+#define SPI_500KBPS 5
+
+#define SPI_MODE0   0
+#define SPI_MODE1   1
+#define SPI_MODE2   2
+#define SPI_MODE3   3
+
+uint32_t SPI_Init(uint8_t speed, uint8_t mode)
+{
+    uint32_t hz = 0;
+    FsysSelect(FSYS_HIRC);
+
+    P15_QUASI_MODE;   
+    P10_QUASI_MODE;   
+    P00_QUASI_MODE;   
+    P01_INPUT_MODE;   
+
+    set_SPSR_DISMODF;
+    clr_SPCR_SSOE;
+    set_SPCR_MSTR;
+
+    switch(mode)
+    {
+        case SPI_MODE0: clr_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE1: clr_SPCR_CPOL; set_SPCR_CPHA; break;
+        case SPI_MODE2: set_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE3: set_SPCR_CPOL; set_SPCR_CPHA; break;
+    }
+
+    if(speed == SPI_2MBPS)      { SPICLK_FSYS_DIV4;  hz = 2000000; }
+    else if(speed == SPI_1MBPS) { SPICLK_FSYS_DIV8;  hz = 1000000; }
+    else if(speed == SPI_500KBPS){SPICLK_FSYS_DIV16; hz = 500000; }
+    else { SPICLK_FSYS_DIV8; hz = 1000000; }
+
+    set_SPCR_SPIEN;
+    return hz;
+}
+
+uint8_t SPI_Transfer(uint8_t data_t)
+{
+    SPDR = data_t;
+    while(!(SPSR & 0x80));
+    clr_SPSR_SPIF;
+    return SPDR;
+}
+
+void main(void)
+{
+    unsigned int d;
+    SPI_Init(SPI_500KBPS, SPI_MODE0);
+
+    P17_PUSHPULL_MODE;
+    P04_PUSHPULL_MODE;
+    P17 = 1;
+
+    while(1)
+    {
+        WIZNET_CS_LOW();
+        SPI_Transfer(0x55);
+        WIZNET_CS_HIGH();
+
+        for(d=0; d<50000; d++);
+        P04 ^= 1;
+    }
+}
