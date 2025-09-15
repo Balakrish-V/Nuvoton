@@ -13,3 +13,8 @@ In the file w5500_ethernet_udp_interface, the code is being edited based on the 
 
 
 There is some important theory in ethernet lib bug fixed file. Check it out. Also very valuable information about network related stacks. Thier tradeoffs and so on inside Network_STACKs file.
+
+Comment out the following line in the recv_alloc function if you use them to receive instead of recv function.
+
+  rx_start_ptr = SWAP_TWO_BYTES(rx_start_ptr);
+    //rx_end_ptr = SWAP_TWO_BYTES(rx_end_ptr);  --> swapping these bytes cause flawed/corrupted/invalid tx/rx buffer pointer operations.
