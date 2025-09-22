@@ -18,3 +18,10 @@ Comment out the following line in the recv_alloc function if you use them to rec
 
   rx_start_ptr = SWAP_TWO_BYTES(rx_start_ptr);
     //rx_end_ptr = SWAP_TWO_BYTES(rx_end_ptr);  --> swapping these bytes cause flawed/corrupted/invalid tx/rx buffer pointer operations.
+
+Note:
+We have used the following Nuvoton Microcontrollers:-
+1. MS51FB9AE (16Kb flash)
+2. MS51EC0AE (32Kb flash)
+
+The BSP is same for both the microcontrollers. But the memory mapping will vary obviously. Also there is pinout differences as the former is 20Pin IC and the latter is 28Pin IC. Check out for it. Also we have made some changes in main file and also in the separate driver file. So simply understanding the main alone will not provide sufficient information about the working of the code.
