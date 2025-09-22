@@ -1,0 +1,254 @@
+#include "ms51_32k.h"
+
+// External timer function for delays
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+// LCD Pin Definitions - HD44780 Standard
+#define RS   P10   // Register Select: 0=Command, 1=Data
+#define EN   P33   // Enable: Falling edge triggers LCD action
+#define DATA P0    // 8-bit Data Bus: Commands/Characters sent here
+
+/*=============================================================================
+ * LCD BASIC OPERATIONS
+ *===========================================================================*/
+
+// Generate Enable pulse - LCD reads data on falling edge
+void lcd_pulse(void)
+{
+    EN = 1;                           // Enable HIGH
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Setup time: Data stable
+    EN = 0;                           // Enable LOW - LCD reads now
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Hold time: Complete read cycle
+}
+
+// Send command to LCD (RS=0)
+void lcd_cmd(unsigned char cmd)
+{
+    RS = 0;                           // Command mode
+    DATA = cmd;                       // Put command on data bus
+    lcd_pulse();                      // Trigger LCD read
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Command execution time
+}
+
+// Send data/character to LCD (RS=1) 
+void lcd_data(unsigned char dat)
+{
+    RS = 1;                           // Data mode
+    DATA = dat;                       // Put character on data bus
+    lcd_pulse();                      // Trigger LCD read
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Data write time
+}
+
+/*=============================================================================
+ * LCD INITIALIZATION - HD44780 Power-On Sequence
+ *===========================================================================*/
+
+void lcd_init(void)
+{
+    Timer2_DELAY(50, DELAY_UNIT_MS);  // Wait: LCD power stabilization
+    
+    // HD44780 initialization sequence (datasheet requirement)
+    RS = 0;                           // Command mode for all init
+    
+    // Step 1: Function set attempts (8-bit mode selection)
+    DATA = 0x30;                      // 8-bit interface attempt 1
+    lcd_pulse();
+    Timer2_DELAY(5, DELAY_UNIT_MS);   // Wait >4.1ms
+    
+    DATA = 0x30;                      // 8-bit interface attempt 2  
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Wait >100us
+    
+    DATA = 0x30;                      // 8-bit interface attempt 3
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Wait >37us
+    
+    // Step 2: Set LCD configuration
+    DATA = 0x38;                      // Function Set: 8-bit, 2-line, 5x8 font
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+    
+    // Step 3: Display control sequence
+    DATA = 0x08;                      // Display OFF: Clear any garbage
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+    
+    DATA = 0x01;                      // Clear Display: Remove all characters
+    lcd_pulse();
+    Timer2_DELAY(3, DELAY_UNIT_MS);   // Clear needs extra time
+    
+    DATA = 0x06;                      // Entry Mode: Auto-increment, no shift
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+    
+    DATA = 0x0C;                      // Display ON: Show chars, no cursor
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+}
+
+/*=============================================================================
+ * LCD CURSOR & DISPLAY CONTROL
+ *===========================================================================*/
+
+// Move cursor to specific position (0,0 = top-left)
+void lcd_goto(unsigned char row, unsigned char col)
+{
+    unsigned char address;
+    if(row == 0)
+        address = 0x80 + col;         // Row 0: DDRAM 0x00-0x0F
+    else
+        address = 0xC0 + col;         // Row 1: DDRAM 0x40-0x4F
+    lcd_cmd(address);                 // Set DDRAM address command
+}
+
+// Print string starting at current cursor position
+void lcd_print(char *str)
+{
+    while(*str)                       // Until null terminator
+    {
+        lcd_data(*str);               // Send each character
+        str++;                        // Move to next character
+    }
+}
+
+// Print single character at current cursor position
+void lcd_putchar(char c)
+{
+    lcd_data(c);                      // Send character directly
+}
+
+/*=============================================================================
+ * LCD DISPLAY COMMANDS
+ *===========================================================================*/
+
+// Clear entire display and return cursor home
+void lcd_clear(void)
+{
+    lcd_cmd(0x01);                    // Clear Display command
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Clear operation takes time
+}
+
+// Return cursor to top-left (0,0) without clearing
+void lcd_home(void)
+{
+    lcd_cmd(0x02);                    // Return Home command  
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Home operation takes time
+}
+
+/*=============================================================================
+ * LCD VISIBILITY CONTROL
+ *===========================================================================*/
+
+void lcd_display_on(void)             // Show all characters
+{ 
+    lcd_cmd(0x0C);                    // Display ON, cursor OFF, blink OFF
+}
+
+void lcd_display_off(void)            // Hide all characters (data preserved)
+{ 
+    lcd_cmd(0x08);                    // Display OFF, cursor OFF, blink OFF
+}
+
+/*=============================================================================
+ * LCD CURSOR CONTROL  
+ *===========================================================================*/
+
+void lcd_cursor_on(void)              // Show underline cursor
+{ 
+    lcd_cmd(0x0E);                    // Display ON, cursor ON, blink OFF
+}
+
+void lcd_cursor_off(void)             // Hide cursor
+{ 
+    lcd_cmd(0x0C);                    // Display ON, cursor OFF, blink OFF
+}
+
+/*=============================================================================
+ * LCD BLINK CONTROL
+ *===========================================================================*/
+
+void lcd_blink_on(void)               // Blink cursor block
+{ 
+    lcd_cmd(0x0F);                    // Display ON, cursor ON, blink ON
+}
+
+void lcd_blink_off(void)              // Stop cursor blinking  
+{ 
+    lcd_cmd(0x0E);                    // Display ON, cursor ON, blink OFF
+}
+
+/*=============================================================================
+ * MAIN PROGRAM - LCD TEST DEMO
+ *===========================================================================*/
+
+void main(void)
+{
+    // System clock: Set to 16MHz internal oscillator
+    MODIFY_HIRC(HIRC_16);
+    
+    /*-------------------------------------------------------------------------
+     * GPIO CONFIGURATION - Set pins as push-pull outputs for LCD drive
+     *-----------------------------------------------------------------------*/
+    
+    P0M1 = 0x00; 
+    P0M2 = 0xFF;   // P0 (DATA bus): Push-pull output, strong drive
+    
+    P1M1 &= ~0x01; 
+    P1M2 |= 0x01;  // P1.0 (RS): Push-pull output
+    
+    P3M1 &= ~0x08; 
+    P3M2 |= 0x08;  // P3.3 (EN): Push-pull output
+    
+    /*-------------------------------------------------------------------------
+     * LCD PIN INITIALIZATION - Safe startup state
+     *-----------------------------------------------------------------------*/
+    
+    RS = 0;        // Command mode initially
+    EN = 0;        // Enable LOW (inactive)
+    DATA = 0x00;   // Data bus LOW
+    
+    /*-------------------------------------------------------------------------
+     * LCD SETUP & TEST DISPLAY
+     *-----------------------------------------------------------------------*/
+    
+    lcd_init();    // Initialize LCD controller
+    
+    lcd_clear();   // Clear any garbage from display
+    
+    // Line 1: Show microcontroller name
+    lcd_goto(0, 0);        // Top-left position
+    lcd_print("MS51EC0AE");
+    
+    // Line 2: Show application purpose  
+    lcd_goto(1, 0);        // Bottom-left position
+    lcd_print("LCD Test");
+    
+    // Line 1: Add emphasis character
+    lcd_goto(0, 10);       // Top row, column 10
+    lcd_putchar('!');      // Single character output
+    
+    /*-------------------------------------------------------------------------
+     * APPLICATION MAIN LOOP
+     *-----------------------------------------------------------------------*/
+    
+    while(1)
+    {
+        // Your application code here
+        // LCD is ready for use with all functions above
+    }
+}
+
+/*=============================================================================
+ * QUICK REFERENCE - Common LCD Operations:
+ * 
+ * Display Text:     lcd_goto(row, col); lcd_print("text");
+ * Clear Screen:     lcd_clear();
+ * Single Char:      lcd_goto(row, col); lcd_putchar('A'); 
+ * Hide Display:     lcd_display_off();
+ * Show Display:     lcd_display_on();
+ * Show Cursor:      lcd_cursor_on();
+ * Hide Cursor:      lcd_cursor_off();
+ * 
+ * LCD Memory Map:   Row 0: 0x80-0x8F, Row 1: 0xC0-0xCF
+ * Timing Critical:  All delays are minimum required by HD44780
+ *===========================================================================*/
