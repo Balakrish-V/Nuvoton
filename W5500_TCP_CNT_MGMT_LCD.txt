@@ -1,0 +1,345 @@
+#include "MS51_32K.h"
+#include "wiznet_header.h"
+#include "spi.h"
+#include "ip_header.h"
+
+#define RX_BUFFER_SIZE 200
+
+uint8_t rx_buffer[RX_BUFFER_SIZE];
+uint16_t received_bytes;
+uint8_t socket_status;
+uint8_t reconnect_attempt_counter;
+uint8_t welcome_msg_sent;
+uint8_t *actual_data;
+uint16_t actual_len;
+volatile uint8_t i;
+
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+#define RS   P10   // Register Select
+#define EN   P33   // Enable
+#define DATA P0    // LCD Data bus (8-bit)port 0 of nuvoton
+
+void lcd_pulse(void)
+{
+    EN = 1;
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Short pulse (~1ms)
+    EN = 0;
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Enable cycle
+}
+
+void lcd_cmd(unsigned char cmd)
+{
+    RS = 0;         
+    DATA = cmd;     
+    lcd_pulse();    
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Command exec time
+}
+
+void lcd_data(unsigned char dat)
+{
+    RS = 1;         
+    DATA = dat;     
+    lcd_pulse();    
+    Timer2_DELAY(2, DELAY_UNIT_MS);       // Data write time
+}
+
+void lcd_init(void)
+{
+    Timer2_DELAY(50, DELAY_UNIT_MS);      // Power-on wait
+    
+    RS = 0;
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(5, DELAY_UNIT_MS);
+
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x38;        // 8-bit, 2-line, 5x8 dots
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x08;        // Display OFF
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x01;        // Clear display
+    lcd_pulse();
+    Timer2_DELAY(3, DELAY_UNIT_MS);
+
+    DATA = 0x06;        // Entry mode
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x0C;        // Display ON
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+}
+
+void lcd_goto(unsigned char row, unsigned char col)
+{
+    unsigned char address;
+    if(row == 0)
+        address = 0x80 + col;        
+    else
+        address = 0xC0 + col;        
+    lcd_cmd(address);
+}
+
+void lcd_print(char *str)
+{
+    while(*str)
+    {
+        lcd_data(*str);
+        str++;
+    }
+}
+
+void lcd_putchar(char c)
+{
+    lcd_data(c);
+}
+
+void lcd_clear(void)
+{
+    lcd_cmd(0x01);
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+}
+
+void lcd_home(void)
+{
+    lcd_cmd(0x02);
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+}
+
+void lcd_display_on(void)  
+{ 
+		lcd_cmd(0x0C);
+}
+void lcd_display_off(void) 
+{ 
+		lcd_cmd(0x08); 
+}
+void lcd_cursor_on(void)   
+{ 
+		lcd_cmd(0x0E); 
+}
+
+void lcd_cursor_off(void)  
+{ 
+		lcd_cmd(0x0C); 
+}
+
+void lcd_blink_on(void)    
+{ 
+		lcd_cmd(0x0F); 
+}
+
+void lcd_blink_off(void)   
+{ 
+		lcd_cmd(0x0E); 
+}
+
+void init_system(wiznet_t *wiznet)
+{
+    MODIFY_HIRC(HIRC_16);
+    SPI_Init(SPI_1MBPS, SPI_MODE0);
+    *wiznet = wiznet_t_init();
+	
+		wiznet->mac_addr[0] = SRC_MAC_0;
+		wiznet->mac_addr[1] = SRC_MAC_1;
+		wiznet->mac_addr[2] = SRC_MAC_2;
+		wiznet->mac_addr[3] = SRC_MAC_3;
+		wiznet->mac_addr[4] = SRC_MAC_4;
+		wiznet->mac_addr[5] = SRC_MAC_5;
+
+		wiznet->ip_addr[0] = SRC_IP_0;
+		wiznet->ip_addr[1] = SRC_IP_1;
+		wiznet->ip_addr[2] = SRC_IP_2;
+		wiznet->ip_addr[3] = SRC_IP_3;
+
+		wiznet->ip_gateway_addr[0] = GATEWAY_0;
+		wiznet->ip_gateway_addr[1] = GATEWAY_1;
+		wiznet->ip_gateway_addr[2] = GATEWAY_2;
+		wiznet->ip_gateway_addr[3] = GATEWAY_3;
+
+		wiznet->subnet_mask[0] = SUBNET_0;
+		wiznet->subnet_mask[1] = SUBNET_1;
+		wiznet->subnet_mask[2] = SUBNET_2;
+		wiznet->subnet_mask[3] = SUBNET_3;
+
+    wiznet_init(wiznet);
+}
+
+// Initialize socket
+void init_socket(socket_t *sock)
+{
+	  *sock = socket_t_init();
+
+		sock->ip[0] = DST_IP_0;
+		sock->ip[1] = DST_IP_1;
+		sock->ip[2] = DST_IP_2;
+		sock->ip[3] = DST_IP_3;
+
+		sock->port = SRC_PORT;
+		sock->dest_port = DST_PORT;
+
+    sock->type = SOCK_TYPE_TCP;
+}
+
+void handle_tcp_connection(wiznet_t *wiznet, socket_t *sock) 
+{ 
+    static uint8_t last_socket_status = 0xFF;   
+    static uint8_t status_stable = 0;           
+    static uint8_t status_change_counter = 0;   
+    static uint8_t error_msg_shown = 0;
+	  static uint8_t disconnect_msg_shown = 0;
+	
+	  socket_status = check_socket_status(sock); 
+
+    if (socket_status != last_socket_status) {
+        last_socket_status = socket_status;
+        status_change_counter = 0;
+        status_stable = 0;
+        return; 
+    } else {
+        if (status_change_counter < 3) {
+            status_change_counter++;
+            if (status_change_counter >= 3) {
+                status_stable = 1;
+            }
+        }
+    }
+
+    if (!status_stable) {
+        return; 
+    }
+
+    switch(socket_status) { 
+        case SOCK_STATUS_ESTABLISHED: {
+            debug_led(LED_ON); 
+            reconnect_attempt_counter = 0; 
+
+            if (!welcome_msg_sent) { 
+                lcd_clear(); 
+                lcd_goto(0, 0);   
+                lcd_print("Conn. Estd.."); 
+                Timer2_DELAY(2000, DELAY_UNIT_MS);  
+                lcd_clear();   
+                safe_sendto(sock, "\r\nHey there, I am using TCP\r\n",sizeof("\r\nHey there, I am using TCP\r\n")); 
+                welcome_msg_sent = 1; 
+							  disconnect_msg_shown = 0;
+							  error_msg_shown = 0;
+            } 
+
+            memset(rx_buffer, 0, RX_BUFFER_SIZE); 
+            received_bytes = recv(sock, rx_buffer, RX_BUFFER_SIZE); 
+
+            if(received_bytes > 0) { 
+                actual_data = rx_buffer; 
+                actual_len = received_bytes; 
+
+                safe_sendto(sock, actual_data, actual_len); 
+
+                lcd_goto(1, 0); 
+                lcd_print("                ");  // clear line 2 
+
+                actual_data[16] = '\0';         // limit to 16 chars 
+                lcd_goto(1, 0); 
+                lcd_print((char*)actual_data); 
+            }
+            break;
+        }
+        
+        case SOCK_STATUS_CLOSE_WAIT: 
+        case SOCK_STATUS_CLOSED: {
+ 
+            welcome_msg_sent = 0; 
+            
+            if (!disconnect_msg_shown) {
+                debug_led(LED_OFF); 
+                lcd_clear(); 
+                lcd_goto(0, 0); 
+                lcd_print("Disconnected_SCW_SC"); 
+                disconnect_msg_shown = 1;
+            }
+
+            reset_socket_for_reconnection(wiznet, sock); 
+            Timer2_DELAY(200, DELAY_UNIT_MS); 
+            break; 
+        }
+        
+        case SOCK_STATUS_LISTEN: 
+            Timer2_DELAY(20, DELAY_UNIT_MS); // shorter delay, still responsive
+            break; 
+          
+        default: {
+            reconnect_attempt_counter++; 
+
+            if (!error_msg_shown) {
+                debug_led(LED_OFF); 
+                lcd_clear(); 
+                lcd_goto(0, 0); 
+                lcd_print("Disconnected_Def"); 
+                error_msg_shown = 1;
+            }
+
+            if (reconnect_attempt_counter > 50) { // ~1s @ 20ms * 50 iterations
+                reset_socket_for_reconnection(wiznet, sock); 
+                Timer2_DELAY(200, DELAY_UNIT_MS); 
+                reconnect_attempt_counter = 0; 
+            }
+            break;
+        }
+    }
+    Timer2_DELAY(20, DELAY_UNIT_MS); 
+}
+
+void init_global_variables(void){
+        received_bytes = 0;
+        socket_status = 0;
+        reconnect_attempt_counter = 0;
+        welcome_msg_sent = 0;
+        actual_data = NULL;
+        actual_len = 0;
+        memset(rx_buffer, 0, RX_BUFFER_SIZE);
+}
+
+socket_t socket2;
+
+wiznet_t wiznet;
+
+void main(void)
+{
+
+    P0M1 = 0x00; 
+    P0M2 = 0xFF;   // P0 push-pull
+    
+    P1M1 &= ~0x01; 
+    P1M2 |= 0x01;  // P1.0 push-pull
+    
+    P3M1 &= ~0x08; 
+    P3M2 |= 0x08;  // P3.3 push-pull
+    
+    RS = 0;
+    EN = 0;
+    DATA = 0x00;
+    
+    init_global_variables();
+    init_system(&wiznet);
+    init_socket(&socket2);
+    socket(&wiznet, &socket2);
+		
+    lcd_init();
+    
+    while(1)
+    {
+         handle_tcp_connection(&wiznet, &socket2);
+    }
+}
