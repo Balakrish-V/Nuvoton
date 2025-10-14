@@ -1,0 +1,1850 @@
+#include "MS51_32K.h"
+#include "wiznet_header.h"
+#include "spi.h"
+#include "ip_header.h"
+#include "function_define_ms51_32k.h"
+
+#define RX_BUFFER_SIZE 200
+
+#define RS   P10   // Register Select
+#define EN   P33   // Enable
+#define DATA P0    // LCD Data bus (8-bit)port 0 of nuvoton
+
+xdata uint8_t rx_buffer[RX_BUFFER_SIZE];   //clearing the buffer happens every time inside handle tcp function
+xdata uint16_t received_bytes = 0;
+xdata uint8_t socket_status = 0;
+xdata uint8_t reconnect_attempt_counter = 0;
+xdata uint8_t welcome_msg_sent = 0;
+xdata uint8_t *actual_data = NULL;
+xdata uint16_t actual_len = 0;
+
+socket_t socket2;
+
+wiznet_t wiznet;
+
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+void lcd_pulse(void)
+{
+    EN = 1;
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Short pulse (~1ms)
+    EN = 0;
+    Timer2_DELAY(1, DELAY_UNIT_MS);   // Enable cycle
+}
+
+void lcd_cmd(unsigned char cmd)
+{
+    RS = 0;         
+    DATA = cmd;     
+    lcd_pulse();    
+    Timer2_DELAY(2, DELAY_UNIT_MS);   // Command exec time
+}
+
+void lcd_data(unsigned char dat)
+{
+    RS = 1;         
+    DATA = dat;     
+    lcd_pulse();    
+    Timer2_DELAY(2, DELAY_UNIT_MS);       // Data write time
+}
+
+void lcd_init(void)
+{
+    P0M1 = 0x00; 
+    P0M2 = 0xFF;   // P0 (DATA bus): Push-pull output, strong drive
+    
+    P1M1 &= ~0x01; 
+    P1M2 |= 0x01;  // P1.0 (RS): Push-pull output
+    
+    P3M1 &= ~0x08; 
+    P3M2 |= 0x08;  // P3.3 (EN): Push-pull output
+
+    RS = 0;        // Command mode initially
+    EN = 0;        // Enable LOW (inactive)
+    DATA = 0x00;   // Data bus LOW
+	
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(5, DELAY_UNIT_MS);
+
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x30;
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x38;        // 8-bit, 2-line, 5x8 dots
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x08;        // Display OFF
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x01;        // Clear display
+    lcd_pulse();
+    Timer2_DELAY(3, DELAY_UNIT_MS);
+
+    DATA = 0x06;        // Entry mode
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+
+    DATA = 0x0C;        // Display ON
+    lcd_pulse();
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+}
+
+void lcd_goto(unsigned char row, unsigned char col)
+{
+    unsigned char address;
+    if(row == 0)
+        address = 0x80 + col;        
+    else
+        address = 0xC0 + col;        
+    lcd_cmd(address);
+}
+
+void lcd_print(char *str)
+{
+    while(*str)
+    {
+        lcd_data(*str);
+        str++;
+    }
+}
+
+void lcd_putchar(char c)
+{
+    lcd_data(c);
+}
+
+void lcd_clear(void)
+{
+    lcd_cmd(0x01);
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+}
+
+void lcd_home(void)
+{
+    lcd_cmd(0x02);
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+}
+
+void lcd_display_on(void)  
+{ 
+		lcd_cmd(0x0C);
+}
+void lcd_display_off(void) 
+{ 
+		lcd_cmd(0x08); 
+}
+void lcd_cursor_on(void)   
+{ 
+		lcd_cmd(0x0E); 
+}
+
+void lcd_cursor_off(void)  
+{ 
+		lcd_cmd(0x0C); 
+}
+
+void lcd_blink_on(void)    
+{ 
+		lcd_cmd(0x0F); 
+}
+
+void lcd_blink_off(void)   
+{ 
+		lcd_cmd(0x0E); 
+}
+
+void u16_to_str(uint16_t num, char *buf)
+{
+    char temp[6];
+    int i = 0, j = 0;
+
+    if(num == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+
+    while(num > 0) {
+        temp[i++] = (num % 10) + '0';
+        num /= 10;
+    }
+    // reverse
+    while(i > 0) {
+        buf[j++] = temp[--i];
+    }
+    buf[j] = '\0';
+}
+
+void lcd_scroll_print(char *str, unsigned char row)
+{
+    unsigned char len = 0;
+    unsigned char i, j;
+
+    while(str[len] != '\0') len++;
+
+    if(len <= 16)
+    {
+        lcd_goto(row, 0);
+        for(i = 0; i < len; i++)
+            lcd_data(str[i]);
+
+        for(; i < 16; i++)
+            lcd_data(' ');
+    }
+    else
+    {
+        for(i = 0; i <= len - 16; i++)   
+        {
+            lcd_goto(row, 0);
+            for(j = 0; j < 16; j++)
+                lcd_data(str[i + j]);
+
+            Timer2_DELAY(300, DELAY_UNIT_MS);  
+        }
+    }
+}
+
+void lcd_print_ip_port(void)
+{
+    char buf[32];
+    char num[6];
+
+    strcpy(buf, "my ip ");
+
+    u16_to_str(SRC_IP_0, num); strcat(buf, num); strcat(buf, ".");
+    u16_to_str(SRC_IP_1, num); strcat(buf, num); strcat(buf, ".");
+    u16_to_str(SRC_IP_2, num); strcat(buf, num); strcat(buf, ".");
+    u16_to_str(SRC_IP_3, num); strcat(buf, num);
+
+    strcat(buf, " & my port ");
+    u16_to_str(SRC_PORT, num);
+    strcat(buf, num);
+
+    lcd_scroll_print(buf, 1);
+}
+
+void init_system(wiznet_t *wiznet)
+{
+	  int32_t wiznet_init_success = 0xABCD;  //some dummy data
+	
+    MODIFY_HIRC(HIRC_16);
+    SPI_Init(SPI_1MBPS, SPI_MODE0);
+		lcd_init();
+    *wiznet = wiznet_t_init();
+	
+		wiznet->mac_addr[0] = SRC_MAC_0;
+		wiznet->mac_addr[1] = SRC_MAC_1;
+		wiznet->mac_addr[2] = SRC_MAC_2;
+		wiznet->mac_addr[3] = SRC_MAC_3;
+		wiznet->mac_addr[4] = SRC_MAC_4;
+		wiznet->mac_addr[5] = SRC_MAC_5;
+
+		wiznet->ip_addr[0] = SRC_IP_0;
+		wiznet->ip_addr[1] = SRC_IP_1;
+		wiznet->ip_addr[2] = SRC_IP_2;
+		wiznet->ip_addr[3] = SRC_IP_3;
+
+		wiznet->ip_gateway_addr[0] = GATEWAY_0;
+		wiznet->ip_gateway_addr[1] = GATEWAY_1;
+		wiznet->ip_gateway_addr[2] = GATEWAY_2;
+		wiznet->ip_gateway_addr[3] = GATEWAY_3;
+
+		wiznet->subnet_mask[0] = SUBNET_0;
+		wiznet->subnet_mask[1] = SUBNET_1;
+		wiznet->subnet_mask[2] = SUBNET_2;
+		wiznet->subnet_mask[3] = SUBNET_3;
+
+    wiznet_init_success = wiznet_init(wiznet);
+		
+		if(wiznet_init_success == -1)
+		{
+	  //    	lcd_clear(); 
+    //      lcd_goto(0, 0);   
+    //      lcd_print("W5500_Init_fail"); 
+    //      Timer2_DELAY(1500, DELAY_UNIT_MS);  
+    //      lcd_clear();  
+		}
+}
+
+void init_socket(socket_t *sock)
+{
+	  *sock = socket_t_init();
+
+		sock->ip[0] = DST_IP_0;
+		sock->ip[1] = DST_IP_1;
+		sock->ip[2] = DST_IP_2;
+		sock->ip[3] = DST_IP_3;
+
+		sock->port = SRC_PORT;
+		sock->dest_port = DST_PORT;
+
+    sock->type = SOCK_TYPE_TCP;
+}
+
+void handle_tcp_connection(wiznet_t *wiznet, socket_t *sock) 
+{ 
+    static uint8_t last_socket_status = 0xFF;   
+    static uint8_t status_stable = 0;           
+    static uint8_t status_change_counter = 0;   
+    static uint8_t error_msg_shown = 0;
+    static uint8_t disconnect_msg_shown = 0;
+	  static uint16_t synsent_timer = 0;
+		static uint8_t scroll_pos_err = 0;
+		static uint8_t scroll_pos = 0;
+			
+		uint8_t do_reset = 0;	
+
+    socket_status = check_socket_status(sock); 
+
+    if (socket_status != last_socket_status) {
+        last_socket_status = socket_status;
+        status_change_counter = 0;
+        status_stable = 0;
+        return; 
+    } else {
+        if (status_change_counter < 3) {
+            status_change_counter++;
+            if (status_change_counter >= 3) {
+                status_stable = 1;
+            }
+        }
+    }
+
+    if (!status_stable) {
+        return; 
+    }
+
+    switch(socket_status) 
+    {
+        case SOCK_STATUS_ESTABLISHED: 
+        {
+            debug_led(LED_ON); 
+            reconnect_attempt_counter = 0;   // useful only when in other states apart from conn.estd state
+            synsent_timer = 0;               // reset if status changes
+            if (!welcome_msg_sent) 
+            { 
+                lcd_clear(); 
+                lcd_goto(0, 0); 
+                lcd_print("Socket Opened"); 
+                lcd_goto(1, 0);
+                lcd_print("TCP Link Up");
+                Timer2_DELAY(2000, DELAY_UNIT_MS);  
+                lcd_clear();   
+
+                safe_sendto(sock, "\r\nHey there, I am using TCP\r\n",sizeof("\r\nHey there, I am using TCP\r\n")); 
+
+                welcome_msg_sent = 1; 
+                disconnect_msg_shown = 0;
+                error_msg_shown = 0;
+            } 
+
+            memset(rx_buffer, 0, RX_BUFFER_SIZE); 
+            received_bytes = recv(sock, rx_buffer, RX_BUFFER_SIZE); 
+
+            if(received_bytes > 0) 
+            { 
+                actual_data = rx_buffer; 
+                actual_len = received_bytes; 
+
+                safe_sendto(sock, actual_data, actual_len); 
+
+                lcd_goto(1, 0); 
+                lcd_print("                ");  // clear line 2 
+
+                actual_data[16] = '\0';         // limit to 16 chars 
+                lcd_goto(1, 0); 
+                lcd_print((char*)actual_data); 
+            }
+            break;
+        }
+        
+        case SOCK_STATUS_CLOSE_WAIT: 
+        case SOCK_STATUS_CLOSED: 
+        {
+					  synsent_timer = 0; // reset if status changes
+            welcome_msg_sent = 0; 
+            
+            if (!disconnect_msg_shown) {
+                debug_led(LED_OFF); 
+                lcd_clear(); 
+                lcd_goto(0, 0); 
+                lcd_print("Socket Closed"); 
+                lcd_goto(1, 0);
+                lcd_print("TCP Link Down");
+                disconnect_msg_shown = 1;
+            }
+
+            reset_socket_for_reconnection(wiznet, sock); 
+            Timer2_DELAY(200, DELAY_UNIT_MS); 
+            break; 
+        }
+        case SOCK_STATUS_LISTEN: 
+        {
+					  synsent_timer = 0; // reset if status changes
+            lcd_clear();
+            lcd_goto(0, 0);
+            lcd_print("Listening...");
+            lcd_goto(1, 0);
+            lcd_print("Awaiting Client");
+            Timer2_DELAY(20, DELAY_UNIT_MS); 
+            break; 
+        }
+				case SOCK_STATUS_SYNSENT:
+				{
+						synsent_timer += 20;  // loop frequency
+
+						lcd_goto(0, 0);
+						lcd_print("SYN_PACKET_Sent");
+
+						lcd_goto(1, 0);
+						switch(scroll_pos) {
+								case 0: lcd_print("Wait for ACK   "); break;  // 3 spaces to clear previous dots
+								case 1: lcd_print("Wait for ACK."); break;
+								case 2: lcd_print("Wait for ACK.."); break;
+								case 3: lcd_print("Wait for ACK..."); break;
+						}
+
+						scroll_pos = (scroll_pos + 1) % 4; // loop 0..3
+
+						if (synsent_timer > TIMEOUT_SOCKET_CONNECT) {
+								reset_socket_for_reconnection(wiznet, sock);
+								synsent_timer = 0;
+								reconnect_attempt_counter = 0;
+						}
+						break;
+				}
+				default:
+				{
+						// Handle any unknown/error state here
+						synsent_timer = 0;
+						reconnect_attempt_counter++;
+
+						if (!error_msg_shown) {
+								debug_led(LED_OFF);
+								lcd_clear();            // clear only once on error
+								lcd_goto(0, 0);
+								lcd_print("Try to connect..");
+								error_msg_shown = 1;
+						}
+
+						scroll_pos_err = 0;
+						lcd_goto(1, 0);
+						lcd_scroll_print("Check network..", scroll_pos_err);
+						lcd_print_ip_port();
+						scroll_pos_err = (scroll_pos_err + 1) % 16;
+
+						if (reconnect_attempt_counter > 50) {
+								reset_socket_for_reconnection(wiznet, sock);
+								reconnect_attempt_counter = 0;
+								error_msg_shown = 0;
+								scroll_pos_err = 0;
+						}
+						break;
+				}
+    } //switch case
+    Timer2_DELAY(20, DELAY_UNIT_MS); // loop delay
+}
+
+void main(void)
+{    
+	  init_system(&wiznet);
+    init_socket(&socket2);
+    
+	  socket(&wiznet, &socket2);                   
+    Timer2_DELAY(100, DELAY_UNIT_MS);        
+
+    sock_open(&socket2);                          
+    Timer2_DELAY(200, DELAY_UNIT_MS);        
+
+    sock_connect(&socket2);                       
+    Timer2_DELAY(300, DELAY_UNIT_MS);
+		
+    socket_enable_keepalive(&socket2, KA_10SEC);
+
+    while(1)
+    {
+         handle_tcp_connection(&wiznet, &socket2);
+    }
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+
+#include "wiznet_header.h"
+#include "spi.h"
+#include "MS51_32K.h"
+#include "ip_header.h"
+
+#define WIZNET_CS_ASSERT()      (P1 &= ~(1 << 5))   /* Clear bit 5 ? CS low  P1.5 */
+#define WIZNET_CS_DEASSERT()    (P1 |=  (1 << 5))   /* Set bit 5 ? CS high */
+#define WIZNET_CS_TOGGLE()      (P1 ^=  (1 << 5))   /* Toggle bit 5 */
+
+#define WIZNET_RESET_ASSERT()   (P3 &= ~0x10)   /* Pull reset low (active reset) - P3.4 = 0 */
+#define WIZNET_RESET_DEASSERT() (P3 |= 0x10)    /* Pull reset high (release reset) - P3.4 = 1 */
+#define WIZNET_RESET_TOGGLE()   (P3 ^= 0x10)    /* Toggle reset pin state - P3.4 toggle */
+
+#define MAX_TCP_SEGMENT_SIZE    1460    /* Maximum TCP segment size (recommended by datasheet) */
+
+#define IAWT 31249  // 31249 - 5ms @ 25MHz
+
+#define W5500_RWB_READ          (0 << 2)    /* Read operation bit pattern */
+#define W5500_RWB_WRITE         (1 << 2)    /* Write operation bit pattern */
+#define W5500_OM_VDM            (0x00)      /* Variable Data Length Mode */
+
+/*===================================================================================*/
+/*               GLOBAL VARIABLES and FUNCTIONS                                      */
+/*===================================================================================*/
+int wiznets_cnt = 0;  //just for track of number of wiznets
+wiznet_t *wiznets[NUM_OF_WIZNETS];
+
+extern socket_t socket2;   /* Debug logging socket */ //-->used when we use interrupt handler and keep alive setting
+
+extern void lcd_clear(void);
+extern void lcd_goto(unsigned char row, unsigned char col);
+extern void lcd_print(char *str);
+void lcd_print_status_fail(sock_status_t status);
+
+const uint8_t sock_n_registers[NUM_OF_SOCKETS] = {
+    SOCKET_0_REGISTERS, SOCKET_1_REGISTERS, SOCKET_2_REGISTERS, SOCKET_3_REGISTERS,
+    SOCKET_4_REGISTERS, SOCKET_5_REGISTERS, SOCKET_6_REGISTERS, SOCKET_7_REGISTERS
+};
+
+/* Socket TX Buffer Block Selectors */
+const uint8_t sock_n_tx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_TX_BUFFER, SOCKET_1_TX_BUFFER, SOCKET_2_TX_BUFFER, SOCKET_3_TX_BUFFER,
+    SOCKET_4_TX_BUFFER, SOCKET_5_TX_BUFFER, SOCKET_6_TX_BUFFER, SOCKET_7_TX_BUFFER
+};
+
+/* Socket RX Buffer Block Selectors */
+const uint8_t sock_n_rx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_RX_BUFFER, SOCKET_1_RX_BUFFER, SOCKET_2_RX_BUFFER, SOCKET_3_RX_BUFFER,
+    SOCKET_4_RX_BUFFER, SOCKET_5_RX_BUFFER, SOCKET_6_RX_BUFFER, SOCKET_7_RX_BUFFER
+};
+
+static void _spi_write(uint16_t addr, uint8_t block, uint8_t *data_t, uint16_t len)
+{
+    uint8_t addr_high, addr_low, control_phase;
+    uint16_t i;
+    
+    addr_high = (uint8_t)((addr >> 8) & 0xFF);     /* Extract high byte of address */
+    addr_low = (uint8_t)(addr & 0xFF);             /* Extract low byte of address */
+    control_phase = (block << 3) | W5500_RWB_WRITE | W5500_OM_VDM;
+    
+    WIZNET_CS_ASSERT();                            /* Select W5500 chip */
+    
+    Spi_Write_Byte(addr_high);                     /* Phase 1: Address high byte */
+    Spi_Write_Byte(addr_low);                      /* Phase 2: Address low byte */
+    Spi_Write_Byte(control_phase);                 /* Phase 3: Control information */
+    
+    for (i = 0; i < len; i++) {
+        Spi_Write_Byte(data_t[i]);                 /* Write each data byte */
+    }
+    
+    WIZNET_CS_DEASSERT();                          /* Deselect W5500 chip */
+}
+
+static void _spi_read(uint16_t addr, uint8_t block, uint8_t *buf, uint16_t len)
+{
+    uint8_t addr_high, addr_low, control_phase;
+    uint16_t i;
+    
+    addr_high = (uint8_t)((addr >> 8) & 0xFF);     /* Extract high byte of address */
+    addr_low = (uint8_t)(addr & 0xFF);             /* Extract low byte of address */
+    control_phase = (block << 3) | W5500_RWB_READ | W5500_OM_VDM;
+    
+    WIZNET_CS_ASSERT();                            /* Select W5500 chip */
+    
+    Spi_Write_Byte(addr_high);                     /* Phase 1: Address high byte */
+    Spi_Write_Byte(addr_low);                      /* Phase 2: Address low byte */
+    Spi_Write_Byte(control_phase);                 /* Phase 3: Control information */
+    
+    for (i = 0; i < len; i++) {
+        buf[i] = Spi_Read_Byte(0xFF);               /* Read each data byte (0xFF = dummy byte) */
+    }
+    
+    WIZNET_CS_DEASSERT();                           /* Deselect W5500 chip */
+}
+
+static void wiznet_hw_reset(void)
+{
+    uint8_t phy_status;
+    uint32_t timeout_counter;
+    
+    timeout_counter = 0;
+   
+    WIZNET_RESET_ASSERT();                         /* Assert reset (active low) */
+    Timer2_DELAY(100, DELAY_UNIT_MS);              /* Hold reset for 100ms */
+    WIZNET_RESET_DEASSERT();                       /* Release reset */
+    Timer2_DELAY(100, DELAY_UNIT_MS);              /* Wait for chip startup */
+    
+    while (1) 
+		{
+        _spi_read(PHYCFGR, COMMON_REGISTERS, &phy_status, 1);
+        
+        if ((phy_status & (1 << PHYCFGR_RST)) && (phy_status & (1 << LNK))) 
+				{
+            break;
+        }
+      
+        timeout_counter++;
+				
+        if (timeout_counter > (TIMEOUT_WIZNET_RESET)) 
+				{
+					  lcd_clear(); 
+            lcd_goto(0, 0); 
+            lcd_print("PHY_Lnk_Not_Rdy"); 
+						break;
+				}
+				Timer2_DELAY(1, DELAY_UNIT_MS);
+    }
+}
+
+wiznet_t wiznet_t_init(void)
+{
+    wiznet_t wiznet;
+    uint8_t i;
+    
+    wiznet._id = -1;                               /* No ID assigned yet */
+    wiznet._sockets_cnt = 0;                       /* No active sockets */
+    wiznet._sockets_taken = 0x00;                  /* No sockets in use (bit mask) */
+    
+    for (i = 0; i < NUM_OF_SOCKETS; i++) {
+        wiznet._sockets[i] = NULL;                 /* All socket pointers null */
+    }
+    
+    P34_PUSHPULL_MODE;                             /* Configure reset pin as output */
+    P34 = 1;                                       /* Set reset pin high (inactive) */
+    
+    for (i = 0; i < 6; i++) {
+        wiznet.mac_addr[i] = 0;
+    }
+    
+    for (i = 0; i < 4; i++) {
+        wiznet.ip_addr[i] = 0;
+    }
+    
+    for (i = 0; i < 4; i++) {
+        wiznet.ip_gateway_addr[i] = 0;
+    }
+    
+    for (i = 0; i < 4; i++) {
+        wiznet.subnet_mask[i] = 0;
+    }
+    
+    return wiznet;
+}
+
+int32_t wiznet_init(wiznet_t *wiznet)
+{
+    uint32_t i;
+    uint16_t i_awt;
+    uint8_t version;
+
+    static uint8_t is_first_wiznet = 1;
+    if (is_first_wiznet) 
+		{
+        is_first_wiznet = 0;
+        for (i = 0; i < NUM_OF_WIZNETS; i++) 
+			  {
+            wiznets[i] = NULL;
+        }
+    }
+
+    if (wiznets_cnt >= NUM_OF_WIZNETS) {
+        return -1;   /* Too many Wiznet instances */
+    }
+    else {
+        for (i = 0; i < NUM_OF_WIZNETS; i++) 
+			  {
+            if (wiznets[i] == NULL) 
+						{
+                wiznets[i] = wiznet;
+                wiznet->_id = i;
+                break;
+            }
+        }
+        wiznets_cnt++;
+    }
+
+    wiznet_hw_reset();
+
+    i_awt = IAWT;
+    i_awt = SWAP_TWO_BYTES(i_awt);
+    _spi_write(INTLEVEL, COMMON_REGISTERS, (uint8_t *)&i_awt, sizeof(uint16_t));
+
+    _spi_write(SHAR, COMMON_REGISTERS, wiznet->mac_addr, 6);        /* MAC address */ //init_system function
+    _spi_write(SIPR, COMMON_REGISTERS, wiznet->ip_addr, 4);         /* IP address */
+    _spi_write(GAR,  COMMON_REGISTERS, wiznet->ip_gateway_addr, 4); /* Gateway */
+    _spi_write(SUBR, COMMON_REGISTERS, wiznet->subnet_mask, 4);     /* Subnet Mask */
+
+    version = wiznet_get_version();
+
+    return (version == 4) ? 0 : -1;   /* Expected W5500 version is 4 -> in datasheet*/
+}
+
+void wiznet_deinit(wiznet_t *wiznet) 
+{
+    wiznet_hw_reset();
+    
+    wiznet->_id = -1;
+    if (wiznets_cnt) {
+        wiznets_cnt--;
+    }
+		
+    wiznets[wiznet->_id] = NULL;
+}
+
+uint8_t wiznet_get_version(void) 
+{
+    uint8_t version = 0;
+    
+    _spi_read(VERSIONR, COMMON_REGISTERS, &version, sizeof(uint8_t));
+    
+    return version;
+}
+
+/*===================================================================================*/
+/*                          WIZNET INTERRUPT HANDLER                                 */
+/*===================================================================================*/
+// For flash space-> we are not using this function
+
+//socket init
+socket_t socket_t_init(void) 
+{
+    socket_t sock;
+
+    sock._id = 1;                    /* Default invalid ID */
+    sock._host_wiznet = NULL;        /* Not yet bound to a Wiznet */
+
+    sock.type   = SOCK_TYPE_CLOSED;  /* Default closed */
+    sock.status = SOCK_STATUS_CLOSED;
+
+    sock.ip[0] = 0;
+    sock.ip[1] = 0;
+    sock.ip[2] = 0;
+    sock.ip[3] = 0;
+
+    sock.macraw_dst[0] = 0;
+    sock.macraw_dst[1] = 0;
+    sock.macraw_dst[2] = 0;
+    sock.macraw_dst[3] = 0;
+    sock.macraw_dst[4] = 0;
+    sock.macraw_dst[5] = 0;
+
+    sock.port      = 0;   /* Source port */
+    sock.dest_port = 0;   /* Destination port */
+
+    return sock;
+}
+
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock) 
+{
+    uint8_t i;
+    uint8_t sock_n_register;
+    uint8_t byte;
+    uint16_t max_sgmnt_size;
+    uint8_t tmpbuf[2];
+    
+    if (wiznet->_sockets_cnt >= NUM_OF_SOCKETS) {
+        sock->status = SOCK_STATUS_NUM_EXCEEDED;
+        return sock->status;
+    }
+    
+    if (sock->type == SOCK_TYPE_MACRAW) {
+        if (((1 << 0) & wiznet->_sockets_taken) == 0) {
+            sock->_id = 0; /* MACRAW always requires socket 0 */
+        } else {
+            sock->status = SOCK_STATUS_MACRAW_TAKEN;
+            return sock->status;
+        }
+    } else if (wiznet->_sockets_taken == 0xFE) { /* 11111110 */
+        sock->_id = 0; /* Only socket 0 free */
+    } else {
+        for (i = 1; i < NUM_OF_SOCKETS; i++) {
+            if (((1 << i) & wiznet->_sockets_taken) == 0) {
+                sock->_id = i;
+                break;
+            }
+        }
+    }
+    
+    sock->_host_wiznet = wiznet;
+    sock_n_register = sock_n_registers[sock->_id];
+    
+    switch (sock->type) {
+        case SOCK_TYPE_UDP:
+            byte = SOCK_TYPE_UDP;
+            break;
+            
+        case SOCK_TYPE_TCP:
+            byte = SOCK_TYPE_TCP;
+            max_sgmnt_size = MAX_TCP_SEGMENT_SIZE;
+            tmpbuf[0] = (uint8_t)((max_sgmnt_size >> 8) & 0xFF); /* High byte */
+            tmpbuf[1] = (uint8_t)(max_sgmnt_size & 0xFF);        /* Low byte */
+            _spi_write(Sn_MSSR, sock_n_register, tmpbuf, 2);
+            break;
+            
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_TYPE_MACRAW;
+            _spi_write(Sn_DHAR, sock_n_register, sock->macraw_dst, 6); /* Write destination MAC */
+            break;
+            
+        default:
+            byte = 0;
+            break;
+    }
+    
+    /* Write Mode Register */
+    _spi_write(Sn_MR, sock_n_register, &byte, 1);
+    
+    if (sock->type != SOCK_TYPE_MACRAW) {
+        /* Source Port */
+        tmpbuf[0] = (uint8_t)((sock->port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->port & 0xFF);
+        _spi_write(Sn_PORT, sock_n_register, tmpbuf, 2);
+        
+        /* Destination Port */
+        tmpbuf[0] = (uint8_t)((sock->dest_port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->dest_port & 0xFF);
+        _spi_write(Sn_DPORT, sock_n_register, tmpbuf, 2);
+        
+        /* Destination IP */
+        _spi_write(Sn_DIPR, sock_n_register, sock->ip, 4);
+    }
+    
+    sock->status = SOCK_STATUS_INIT;
+    
+    if (sock->status > 0) {
+        wiznet->_sockets_cnt++;
+        wiznet->_sockets_taken |= (1 << sock->_id);
+        wiznet->_sockets[sock->_id] = sock;
+    } else {
+        /* Rollback on failure */
+        sock->_id = -1;
+        sock->_host_wiznet = NULL;
+			  lcd_clear();
+        lcd_goto(1,0);
+        lcd_print("In_Socket");
+			  Timer2_DELAY(200, DELAY_UNIT_MS); 
+			  lcd_print_status_fail(sock->status);
+    }
+    return sock->status;
+}
+
+void sock_reset(socket_t *sock) 
+{
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    uint8_t byte = 0;
+    uint8_t two_bytes[2] = {0, 0};
+    uint8_t four_bytes[4] = {0, 0, 0, 0};
+    uint8_t six_bytes[6] = {0, 0, 0, 0, 0, 0};
+    
+    _spi_write(Sn_MR, sock_n_register, &byte, sizeof(uint8_t));
+    _spi_write(Sn_PORT, sock_n_register, two_bytes, sizeof(two_bytes));
+    _spi_write(Sn_DPORT, sock_n_register, two_bytes, sizeof(two_bytes));
+    _spi_write(Sn_MSSR, sock_n_register, two_bytes, sizeof(two_bytes));
+    _spi_write(Sn_DHAR, sock_n_register, six_bytes, sizeof(six_bytes));
+    _spi_write(Sn_DIPR, sock_n_register, four_bytes, sizeof(four_bytes));
+}
+
+void sock_deinit(socket_t *sock) 
+{
+    uint8_t byte;
+    
+    sock_reset(sock);
+    
+    _spi_read(SIMR, COMMON_REGISTERS, &byte, 1);
+    byte &= ~(1 << sock->_id);
+    _spi_write(SIMR, COMMON_REGISTERS, &byte, 1);
+    
+    if (sock->_host_wiznet->_sockets_cnt > 0) {
+        sock->_host_wiznet->_sockets_cnt--;
+    }
+    
+    sock->_host_wiznet->_sockets_taken &= ~(1 << sock->_id);
+    sock->_host_wiznet->_sockets[sock->_id] = NULL;
+}
+
+uint8_t sock_open(socket_t *sock) 
+{
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    uint8_t cmd, status = 0;
+    uint32_t timeout_counter = 0;
+
+    // 1. Make sure socket is CLOSED before opening
+    _spi_read(Sn_SR, sock_n_register, &status, 1);
+    if (status != SOCK_STATUS_CLOSED) {
+        // Force close if not already closed
+        cmd = SOCK_CMD_CLOSE;
+        _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+
+        // Wait until closed
+        do {
+            _spi_read(Sn_SR, sock_n_register, &status, 1);
+        } while (status != SOCK_STATUS_CLOSED);
+    }
+
+    // 2. Issue OPEN
+    cmd = SOCK_CMD_OPEN;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+
+    // 3. Wait for proper status
+    timeout_counter = 0;
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+
+        if ((sock->type == SOCK_TYPE_UDP   && status == SOCK_STATUS_UDP)   ||
+            (sock->type == SOCK_TYPE_TCP   && status == SOCK_STATUS_INIT)  ||
+            (sock->type == SOCK_TYPE_MACRAW && status == SOCK_STATUS_MACRAW)) 
+        {
+            sock->status = status;
+            return 1;  // Success
+        }
+
+        Timer2_DELAY(10, DELAY_UNIT_MS);
+        timeout_counter += 10;
+
+    } while (timeout_counter < TIMEOUT_SOCKET_OPEN);
+
+    // 4. Timeout handling ? reset socket
+    cmd = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+    } while (status != SOCK_STATUS_CLOSED);
+
+    sock->status = status;
+
+    lcd_clear();
+    lcd_goto(0,0);
+    lcd_print("Open Timeout");
+    lcd_goto(1,0);
+    lcd_print_status_fail(sock->status);
+
+    return 0; // Failure
+}
+
+void sock_connect(socket_t *sock) 
+{
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    uint8_t byte = SOCK_CMD_CONNECT;
+    uint8_t status = 0;
+    uint32_t timeout_counter = 0;
+    
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+    
+    while (timeout_counter < TIMEOUT_SOCKET_CONNECT) {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+        
+        if (status == SOCK_STATUS_ESTABLISHED) 
+				{
+            sock->status = SOCK_STATUS_ESTABLISHED;
+            return;
+        }
+        
+        Timer2_DELAY(50, DELAY_UNIT_MS);
+        timeout_counter += 50;
+    }
+}
+
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len)
+{
+    uint8_t  sock_n_register   = sock_n_registers[sock->_id];
+    uint16_t sock_n_tx_buffer  = sock_n_tx_buffers[sock->_id];
+    uint16_t tx_buf_free_size  = 0;
+    uint16_t tx_start_ptr      = 0, tx_end_ptr = 0;
+    uint8_t  byte              = 0;
+
+    uint8_t  need_to_fragment      = 0;
+    uint8_t *ptr_to_next_fragment  = NULL;
+    uint16_t len_of_next_fragment  = 0;
+
+    _spi_read(Sn_TX_FSR, sock_n_register, (uint8_t *)&tx_buf_free_size, sizeof(uint16_t));
+    tx_buf_free_size = SWAP_TWO_BYTES(tx_buf_free_size);
+
+    if (tx_buf_free_size < len) {
+        need_to_fragment     = 1;
+        ptr_to_next_fragment = data_t + tx_buf_free_size;
+        len_of_next_fragment = len - tx_buf_free_size;
+        len                  = tx_buf_free_size;
+    }
+
+    _spi_read(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_start_ptr, sizeof(uint16_t));
+
+    _spi_write(tx_start_ptr, sock_n_tx_buffer, data_t, len);
+
+    tx_end_ptr = tx_start_ptr + len;
+    _spi_write(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_end_ptr, sizeof(uint16_t));
+
+    switch (sock->type) {
+        case SOCK_TYPE_TCP:
+        case SOCK_TYPE_UDP:    byte = SOCK_CMD_SEND;     break;
+        case SOCK_TYPE_MACRAW: byte = SOCK_CMD_SEND_MAC; break;
+        default:               byte = 0;                 break;
+    }
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    if (need_to_fragment) {
+        sendto(sock, ptr_to_next_fragment, len_of_next_fragment);
+    }
+}
+
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size)
+{
+    uint8_t  sock_n_register;        // BSB address for socket registers
+    uint16_t sock_n_rx_buffer;       // BSB address for socket RX buffer
+    uint16_t rx_start_ptr;           // RX read pointer
+    uint16_t rx_end_ptr;             // RX write pointer
+    uint16_t len_of_received_data;   // Total number of available bytes
+    uint16_t first_chunk_len;        // Length of first contiguous block
+    uint16_t second_chunk_len;       // Length of second block (in case of wrap-around)
+    uint8_t  byte;                   // Temporary variable for command write
+
+    sock_n_register  = sock_n_registers[sock->_id];
+    sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+
+    _spi_read(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _spi_read(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0;   // No data available
+    }
+    else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr + 1;
+    }
+    else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+    }
+
+    if (len_of_received_data > buf_size) {
+        len_of_received_data = buf_size;
+    }
+
+    if (rx_end_ptr < rx_start_ptr) {
+        first_chunk_len  = 0xFFFF - rx_start_ptr + 1;
+        if (first_chunk_len > len_of_received_data) {
+            first_chunk_len  = len_of_received_data;
+            second_chunk_len = 0;
+        } else {
+            second_chunk_len = len_of_received_data - first_chunk_len;
+        }
+
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, first_chunk_len);
+
+        if (second_chunk_len > 0) {
+            _spi_read(0, sock_n_rx_buffer, buf + first_chunk_len, second_chunk_len);
+        }
+    }
+    else {
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, len_of_received_data);
+    }
+
+    rx_start_ptr = rx_start_ptr + len_of_received_data;
+    _spi_write(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+
+    byte = SOCK_CMD_RECV;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+
+/*===================================================================================*/
+/*                          SOCKET RECEIVE (ALLOC) FUNCTION                          */
+/*===================================================================================*/
+//for flash memory space optimization, we have removed this function as malloc fails
+
+void sock_discon(socket_t *sock) 
+{
+    uint8_t  sock_n_register;
+    uint8_t  byte;
+    uint8_t  status;
+    uint32_t retry_counter = 0;
+
+    sock_n_register = sock_n_registers[sock->_id];
+
+    byte = SOCK_CMD_DISCON;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    while (1) 
+			{
+        _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        }
+        else if (retry_counter++ > 5000) 
+				{   
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+void sock_close(socket_t *sock) 
+{
+    uint8_t  sock_n_register;
+    uint8_t  byte;
+    uint8_t  status;
+    uint32_t retry_counter = 0;
+
+    sock_n_register = sock_n_registers[sock->_id];
+
+    byte = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    while (1) {
+        _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        }
+        else if (retry_counter++ > 5000) {
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+uint8_t safe_sendto(socket_t *sock, uint8_t *data_t, uint16_t len)
+{
+    uint8_t status;
+    
+    status = check_socket_status(sock);
+    
+    if (status == SOCK_STATUS_ESTABLISHED) {
+        sendto(sock, data_t, len);
+        return 1;
+    }
+    
+    return 0;
+}
+
+uint8_t check_socket_status(socket_t *sock)
+{
+    uint8_t status = 0;
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    
+    _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+    
+    return status;
+}
+
+void reset_socket_for_reconnection(wiznet_t *wiznet, socket_t *sock)
+{
+    uint8_t  sock_n_register = sock_n_registers[sock->_id];
+    uint8_t  cmd_reg = 0;
+    uint8_t  status_reg = 0;
+    uint8_t  clear_ir = 0xFF;
+    uint16_t timeout_counter;
+    uint8_t  ptr_bytes[2] = {0};
+
+    _spi_read(Sn_SR, sock_n_register, &status_reg, sizeof(uint8_t));
+
+    if (status_reg == SOCK_STATUS_ESTABLISHED || status_reg == SOCK_STATUS_CLOSE_WAIT) 
+		{
+        cmd_reg = SOCK_CMD_DISCON;
+        _spi_write(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+
+        timeout_counter = 0;
+        do 
+				{
+            _spi_read(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+            Timer2_DELAY(10, DELAY_UNIT_MS);
+            timeout_counter += 10;
+        } while (cmd_reg != 0x00 && timeout_counter <= TIMEOUT_SOCKET_DISCON);
+
+        if (cmd_reg != 0x00) 
+				{
+            lcd_clear(); lcd_goto(0,0); lcd_print("Err: DISCON fail");
+            Timer2_DELAY(200, DELAY_UNIT_MS);
+        }
+
+        timeout_counter = 0;
+        do 
+				{
+            _spi_read(Sn_SR, sock_n_register, &status_reg, sizeof(uint8_t));
+            Timer2_DELAY(10, DELAY_UNIT_MS);
+            timeout_counter += 10;
+        } while (status_reg != SOCK_STATUS_CLOSED && timeout_counter <= TIMEOUT_SOCKET_DISCON);
+
+        if (status_reg != SOCK_STATUS_CLOSED) {
+            lcd_clear(); 
+					  lcd_goto(0,0); 
+					  lcd_print("Err: Sock not closed");
+            Timer2_DELAY(200, DELAY_UNIT_MS);
+        }
+    }
+		else if (status_reg >= SOCK_STATUS_SYNSENT && status_reg <= SOCK_STATUS_LAST_ACK) {
+				// Instead of just warning, force CLOSE
+				cmd_reg = SOCK_CMD_CLOSE;
+				_spi_write(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+
+				timeout_counter = 0;
+				do {
+						_spi_read(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+						Timer2_DELAY(10, DELAY_UNIT_MS);
+						timeout_counter += 10;
+				} while (cmd_reg != 0x00 && timeout_counter <= TIMEOUT_SOCKET_CLOSE);
+
+				if (cmd_reg != 0x00) {
+						lcd_clear(); lcd_goto(0,0); lcd_print("Err: Force CLOSE fail");
+						Timer2_DELAY(200, DELAY_UNIT_MS);
+				}
+			cmd_reg = SOCK_CMD_CLOSE;
+			_spi_write(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+		}
+    timeout_counter = 0;
+    do 
+		{
+        _spi_read(Sn_CR, sock_n_register, &cmd_reg, sizeof(uint8_t));
+        Timer2_DELAY(10, DELAY_UNIT_MS);
+        timeout_counter += 10;
+    } while (cmd_reg != 0x00 && timeout_counter <= TIMEOUT_SOCKET_CLOSE);
+
+    if (cmd_reg != 0x00) {
+        lcd_clear(); lcd_goto(0,0); lcd_print("Err: CLOSE fail");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+
+    _spi_write(Sn_IR, sock_n_register, &clear_ir, sizeof(uint8_t));
+    ptr_bytes[0] = 0x00; ptr_bytes[1] = 0x00;
+    _spi_write(Sn_TX_WR, sock_n_register, ptr_bytes, 2);
+    _spi_write(Sn_RX_RD, sock_n_register, ptr_bytes, 2);
+    Timer2_DELAY(100, DELAY_UNIT_MS);  
+		
+		sock_deinit(sock);
+		
+    *sock = socket_t_init();
+		
+    sock->type      = SOCK_TYPE_TCP;
+    sock->port      = SRC_PORT;
+    sock->dest_port = DST_PORT;
+    sock->ip[0]     = DST_IP_0;
+    sock->ip[1]     = DST_IP_1;
+    sock->ip[2]     = DST_IP_2;
+    sock->ip[3]     = DST_IP_3;
+
+    if (socket(wiznet, sock) <= 0) {
+        lcd_clear(); lcd_goto(0,0); 
+			  lcd_print("Err: Sock init");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+    Timer2_DELAY(100, DELAY_UNIT_MS);
+
+    if (!sock_open(sock)) {
+        lcd_clear(); 
+			  lcd_goto(0,0); 
+			  lcd_print("Err: Sock open");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+    Timer2_DELAY(200, DELAY_UNIT_MS);
+
+    sock_connect(sock);
+    Timer2_DELAY(300, DELAY_UNIT_MS);
+
+    socket_enable_keepalive(sock, KA_10SEC);
+}
+
+void socket_enable_keepalive(socket_t *sock, uint8_t interval)
+{
+    uint8_t sock_n_register = sock_n_registers[sock->_id];
+    uint8_t reg_value = interval; 
+
+    _spi_write(Sn_KPALVTR, sock_n_register, &reg_value, sizeof(uint8_t));
+}
+
+void lcd_print_status_fail(sock_status_t status)
+{
+    lcd_clear();
+    lcd_goto(0,0);
+
+    switch(status)
+    {
+        case SOCK_STATUS_CLOSED:
+            lcd_print("Err: Closed");
+            break;
+        case SOCK_STATUS_INIT:
+            lcd_print("Err: Init fail");
+            break;
+        case SOCK_STATUS_MACRAW_TAKEN:
+            lcd_print("Err: MACRAW taken");
+            break;
+        case SOCK_STATUS_NUM_EXCEEDED:
+            lcd_print("Err: Sock num exceeded");
+            break;
+        case SOCK_STATUS_CLOSE_WAIT:
+            lcd_print("Err: Close wait");
+            break;
+        case SOCK_STATUS_TIME_WAIT:
+            lcd_print("Err: Time wait");
+            break;
+        case SOCK_STATUS_FIN_WAIT:
+            lcd_print("Err: Fin wait");
+            break;
+        case SOCK_STATUS_CLOSING:
+            lcd_print("Err: Closing");
+            break;
+        case SOCK_STATUS_LAST_ACK:
+            lcd_print("Err: Last ack");
+            break;
+        case SOCK_STATUS_SYNSENT:
+            lcd_print("Err: SYN sent");
+            break;
+        case SOCK_STATUS_SYNRECV:
+            lcd_print("Err: SYN recv");
+            break;
+        default:
+            lcd_print("Err: Unknown");
+            break;
+    }
+    Timer2_DELAY(200, DELAY_UNIT_MS); 
+}
+
+//////////////////////////////////////////////////////////////
+
+/* ===================== CONFIGURATION MACROS ===================== */
+
+// Source MAC Address
+#define SRC_MAC_0   0x21
+#define SRC_MAC_1   0x22
+#define SRC_MAC_2   0x23
+#define SRC_MAC_3   0x24
+#define SRC_MAC_4   0x25
+#define SRC_MAC_5   0x26
+
+// Source IP (Device IP)
+#define SRC_IP_0    192
+#define SRC_IP_1    168
+#define SRC_IP_2    30
+#define SRC_IP_3    205
+
+// Gateway
+#define GATEWAY_0   192
+#define GATEWAY_1   168
+#define GATEWAY_2   30
+#define GATEWAY_3   254
+
+// Subnet
+#define SUBNET_0    255
+#define SUBNET_1    255
+#define SUBNET_2    255
+#define SUBNET_3    0
+
+// Destination IP (Server IP)
+#define DST_IP_0    192
+#define DST_IP_1    168
+#define DST_IP_2    30
+#define DST_IP_3    104
+
+// Source Port (local port)
+#define SRC_PORT    1400
+
+// Destination Port (remote port)
+#define DST_PORT    1401
+
+/////////////////////////////////////////////////
+
+#include "ms51_32k.h"
+#include "spi.h"
+/****************************************************************/
+void Spi_Write_Byte(unsigned char u8SpiWB)
+{
+    SPDR = u8SpiWB;
+    while(!(SPSR&0x80));
+    clr_SPSR_SPIF;
+}
+/****************************************************************/
+unsigned char Spi_Read_Byte(unsigned char u8Data)
+{
+    SPDR = u8Data;                       // Write data (dummy or command)
+    while(!(SPSR & SET_BIT7));         // Wait until SPIF = 1 (transfer done)
+    clr_SPSR_SPIF;                     // Clear SPIF by software
+    return SPDR;                         // Read received byte
+}
+
+/****************************************************************/
+
+unsigned long SPI_Init(unsigned char speed, unsigned char mode)
+{
+    unsigned long hz = 0;
+    // Switch to SFR Page 2 to access AUXR7
+    TA = 0xAA;
+    TA = 0x55;
+    SFRS = 2;  // Switch to SFR Page 2
+    
+    AUXR7 |= 0x07;  // Set bits 2,1,0 = 111 for alternate pins
+    
+    // Switch back to SFR Page 0
+    TA = 0xAA;
+    TA = 0x55;
+    SFRS = 0;  // Switch back to SFR Page 0
+    // Pin configuration for custom SPI setup
+    P15_PUSHPULL_MODE;   // CS pin (P1.5)
+    P34_PUSHPULL_MODE;   // RESET pin (P3.4)
+    P17_QUASI_MODE;      // CLK pin (P1.7) - SPI clock
+    P30_QUASI_MODE;      // MOSI pin (P3.0) - Master Out Slave In
+    P25_INPUT_MODE;      // MISO pin (P2.5) - Master In Slave Out
+    
+    P15 = 1;             // CS high (inactive)
+    P34 = 1;             // Reset high (inactive)
+	
+    set_SPSR_DISMODF;
+    clr_SPCR_SSOE;
+    set_SPCR_MSTR;
+    
+    switch(mode)
+    {
+        case SPI_MODE0: clr_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE1: clr_SPCR_CPOL; set_SPCR_CPHA; break;
+        case SPI_MODE2: set_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE3: set_SPCR_CPOL; set_SPCR_CPHA; break;
+    }
+    
+    if(speed == SPI_2MBPS)      
+    { 
+        SPICLK_FSYS_DIV4;  
+        hz = 2000000; 
+    }
+    else if(speed == SPI_1MBPS) 
+    { 
+		   SPICLK_FSYS_DIV8;  hz = 1000000; 
+		}
+    else if(speed == SPI_500KBPS)
+    { 
+			SPICLK_FSYS_DIV16; hz = 500000;  
+		}
+    else                        
+    { 
+			SPICLK_FSYS_DIV8;  hz = 1000000; 
+		}
+    set_SPCR_SPIEN;
+    return hz;
+}
+
+/*****************************************************/
+
+void Timer2_DELAY(unsigned int time, unsigned char unit)
+{
+    /*--- Calculate Total Number of Timer Cycles Needed ---*/
+    /* Convert time to milliseconds: if unit is MS use time directly, if SEC multiply by 1000 */
+    unsigned long loops = (unit == DELAY_UNIT_MS) ? time : (time * 1000UL);
+    unsigned long i;
+    
+    /*--- Execute Delay Loop ---*/
+    /* Each loop iteration creates exactly 1 millisecond delay using Timer2 */
+    for (i = 0; i < loops; i++)
+    {
+        /*--- Configure Timer2 for 1ms Delay ---*/
+        T2MOD = 0x00;       /* Set Timer2 to normal 16-bit auto-reload mode */
+                            /* Normal mode: timer counts up and auto-reloads when it overflows */
+        
+        /*--- Set Timer2 Reload Values for 1ms Timing ---*/
+        RCMP2H = 0xC1;      /* Reload value high byte = 0xC1 (for 1ms timing) */
+        RCMP2L = 0x80;      /* Reload value low byte = 0x80 (total reload = 0xC180) */
+        
+        /*--- Initialize Timer2 Count Values ---*/
+        TH2 = 0xC1;         /* Set timer high byte to same value as reload high byte */
+        TL2 = 0x80;         /* Set timer low byte to same value as reload low byte */
+                           /* Starting with reload values ensures consistent 1ms timing */
+        
+        /*--- Prepare Timer2 for Operation ---*/
+        TF2 = 0;            /* Clear Timer2 overflow flag - ensures clean start */
+                            /* TF2 = 1 when timer overflows, TF2 = 0 means no overflow yet */
+        
+        /*--- Start Timer2 Counting ---*/
+        TR2 = 1;            /* Enable Timer2 to start counting (TR2 = Timer Run bit) */
+                            /* Timer now counts from 0xC180 up to 0xFFFF, then overflows */
+        
+        /*--- Wait for 1 Millisecond to Complete ---*/
+        while(!TF2);        /* Wait in loop until TF2 flag becomes 1 (overflow occurred) */
+                            /* When TF2 = 1, exactly 1 millisecond has passed */
+        
+        /*--- Clean Up After 1ms Delay ---*/
+        TF2 = 0;            /* Clear the overflow flag for next iteration */
+        TR2 = 0;            /* Stop Timer2 to save power and reset for next cycle */
+    }
+    
+    /* Function exits after creating precise delay of 'time' milliseconds or seconds */
+}
+
+/***********************************************/
+void debug_led(led_action_t action) 
+{
+    /*--- GPIO Pin Configuration ---*/
+    P11_PUSHPULL_MODE;                 /* Configure P0.4 as push-pull output for driving LED */
+    
+    /*--- LED Control Logic ---*/
+    switch(action) 
+    {
+        case LED_OFF:
+            P11 = 0;                   /* Drive pin low (LED off if active-high, on if active-low) */
+            break;
+            
+        case LED_ON:
+            P11 = 1;                   /* Drive pin high (LED on if active-high, off if active-low) */
+            break;
+            
+        case LED_TOGGLE:
+            P11 ^= 1;                  /* Toggle current state of the LED pin */
+            break;
+    }
+}
+/*******************************************/
+
+////////////////////////////////////////////////////////////////////
+
+#ifndef WIZNET_H_
+#define WIZNET_H_
+
+/*===================================================================================*/
+/*                                    INCLUDES                                       */
+/*===================================================================================*/
+#include <stdlib.h>
+#include <stdbool.h>
+#include "function_define_ms51_32k.h"
+
+//timeouts
+
+/* Timeout Values (in milliseconds) */
+#define TIMEOUT_WIZNET_RESET    8000    /* Hardware reset completion timeout */
+#define TIMEOUT_SOCKET_OPEN     1000    /* Socket open operation timeout */
+#define TIMEOUT_SOCKET_CONNECT  2000    /* TCP connection establishment timeout */
+#define TIMEOUT_SOCKET_CLOSE    1000    /* Socket close operation timeout */
+#define TIMEOUT_SOCKET_DISCON   2000    /* TCP disconnection timeout */
+#define TIMEOUT_SPI_TRANSMIT    100     /* SPI data transmission timeout */
+#define TIMEOUT_SPI_RECEIVE     100     /* SPI data reception timeout */
+
+/*===================================================================================*/
+/*                               CONFIGURATION MACROS                                */
+/*===================================================================================*/
+
+/* Hardware Configuration */
+#define NUM_OF_WIZNETS      1       /* Number of Wiznet chips in system */
+#define NUM_OF_SOCKETS      8       /* Number of sockets per Wiznet chip (adjust sock_n_* arrays if changed) */
+
+/* SPI Communication Configuration */
+#define RWB                 2       /* Read/Write Bit position in Control Phase */
+
+/* Byte Order Conversion Macro */
+/*
+ * This macro converts between host and Wiznet byte ordering (little-endian to big-endian)
+ * Usage examples:
+ *   - Before writing: port = SWAP_TWO_BYTES(port);
+ *   - After reading:  port = SWAP_TWO_BYTES(port);
+ */
+#define SWAP_TWO_BYTES(X) ((((X)&(0xFF00))>>8)|(((X)&(0x00FF))<<8))
+
+/*===================================================================================*/
+/*                           WIZNET REGISTER ADDRESSES                              */
+/*===================================================================================*/
+
+/* Control Phase BSB[4:0] Values - Block Select Bits */
+#define COMMON_REGISTERS    0x00    /* Common register block */
+
+/* Socket Register Blocks (each socket has registers, TX buffer, RX buffer) */
+#define SOCKET_0_REGISTERS  0x01
+#define SOCKET_0_TX_BUFFER  0x02
+#define SOCKET_0_RX_BUFFER  0x03
+
+#define SOCKET_1_REGISTERS  0x05
+#define SOCKET_1_TX_BUFFER  0x06
+#define SOCKET_1_RX_BUFFER  0x07
+
+#define SOCKET_2_REGISTERS  0x09
+#define SOCKET_2_TX_BUFFER  0x0A
+#define SOCKET_2_RX_BUFFER  0x0B
+
+#define SOCKET_3_REGISTERS  0x0D
+#define SOCKET_3_TX_BUFFER  0x0E
+#define SOCKET_3_RX_BUFFER  0x0F
+
+#define SOCKET_4_REGISTERS  0x11
+#define SOCKET_4_TX_BUFFER  0x12
+#define SOCKET_4_RX_BUFFER  0x13
+
+#define SOCKET_5_REGISTERS  0x15
+#define SOCKET_5_TX_BUFFER  0x16
+#define SOCKET_5_RX_BUFFER  0x17
+
+#define SOCKET_6_REGISTERS  0x19
+#define SOCKET_6_TX_BUFFER  0x1A
+#define SOCKET_6_RX_BUFFER  0x1B
+
+#define SOCKET_7_REGISTERS  0x1D
+#define SOCKET_7_TX_BUFFER  0x1E
+#define SOCKET_7_RX_BUFFER  0x1F
+
+/*===================================================================================*/
+/*                            COMMON REGISTER ADDRESSES                             */
+/*===================================================================================*/
+
+/* Mode and Configuration Registers */
+#define MR          0x0000  /* Mode Register (1 byte) - Main control register */
+#define PHYCFGR     0x002E  /* PHY Configuration Register (1 byte) - Physical layer config */
+#define VERSIONR    0x0039  /* Hardware Version Register (1 byte) - Always equals '4' */
+
+/* Network Configuration Registers */
+#define GAR         0x0001  /* Gateway IP Address Register (4 bytes) */
+#define SUBR        0x0005  /* Subnet Mask Register (4 bytes) */
+#define SHAR        0x0009  /* Source MAC Address Register (6 bytes) - Our MAC address */
+#define SIPR        0x000F  /* Source IP Address Register (4 bytes) - Our IP address */
+
+/* Interrupt Control Registers */
+#define INTLEVEL    0x0013  /* Interrupt Assert Wait Time (2 bytes) - Delay between interrupts */
+#define IR          0x0015  /* Interrupt Register (1 byte) - Shows which interrupts occurred */
+#define IMR         0x0016  /* Interrupt Mask Register (1 byte) - Controls which interrupts are enabled */
+#define SIR         0x0017  /* Socket Interrupt Register (1 byte) - Shows which sockets have interrupts */
+#define SIMR        0x0018  /* Socket Interrupt Mask Register (1 byte) - Controls socket interrupts */
+
+/*===================================================================================*/
+/*                       COMMON REGISTER BIT DEFINITIONS                            */
+/*===================================================================================*/
+
+/* Mode Register (MR) Bit Definitions - Currently commented out for future use */
+/* 
+#define MR_RST      7       // Software reset bit ('1' to reset, wait until becomes '0')
+#define WOL         5       // Wake on LAN enable bit
+#define PB          4       // Ping Block bit ('0' to disable ping blocking)
+#define PPPoE       3       // Set to '1' for ADSL/PPPoE mode
+#define FARP        1       // Force ARP request bit ('1' to force sending ARP requests)
+*/
+
+/* PHY Configuration Register (PHYCFGR) Bit Definitions */
+#define PHYCFGR_RST 7       /* Reset completion bit - Check this to know when reset is done */
+#define LNK         0       /* Link status bit - Check this to know if PHY link is up */
+
+/*===================================================================================*/
+/*                            SOCKET REGISTER ADDRESSES                             */
+/*===================================================================================*/
+
+/* Socket Control and Status Registers */
+#define Sn_MR       0x0000  /* Socket Mode Register (1 byte) - Socket type and options */
+#define Sn_CR       0x0001  /* Socket Command Register (1 byte) - Commands to execute */
+#define Sn_IR       0x0002  /* Socket Interrupt Register (1 byte) - Socket interrupt flags */
+#define Sn_SR       0x0003  /* Socket Status Register (1 byte) - Current socket state */
+#define Sn_IMR      0x002C  /* Socket Interrupt Mask Register (1 byte) - Default 0xFF (all enabled) */
+
+/* Socket Address and Port Registers */
+#define Sn_PORT     0x0004  /* Local Port Register (2 bytes) - Our listening/source port */
+#define Sn_DHAR     0x0006  /* Destination MAC Address Register (6 bytes) - Bypass ARP with this */
+#define Sn_DIPR     0x000C  /* Destination IP Address Register (4 bytes) - Remote IP address */
+#define Sn_DPORT    0x0010  /* Destination Port Register (2 bytes) - Remote port number */
+
+/* Socket Configuration Registers */
+#define Sn_MSSR     0x0012  /* Maximum Segment Size Register (2 bytes) - TCP MSS value */
+#define Sn_KPALVTR  0x002F  /* Keep Alive Timer Register - TCP keep-alive interval */
+
+/* Socket Buffer Management Registers */
+#define Sn_TX_FSR   0x0020  /* TX Buffer Free Size Register (2 bytes) - Available TX buffer space */
+#define Sn_TX_RD    0x0022  /* TX Buffer Read Pointer (2 bytes) - Start of data to send */
+#define Sn_TX_WR    0x0024  /* TX Buffer Write Pointer (2 bytes) - End of data written */
+
+#define Sn_RX_RSR   0x0026  /* RX Buffer Received Size Register (2 bytes) - Bytes received and ready */
+#define Sn_RX_RD    0x0028  /* RX Buffer Read Pointer (2 bytes) - Start of data to read */
+#define Sn_RX_WR    0x002A  /* RX Buffer Write Pointer (2 bytes) - End of received data */
+
+/*===================================================================================*/
+/*                           SOCKET REGISTER BIT DEFINITIONS                        */
+/*===================================================================================*/
+
+/* Socket Mode Register (Sn_MR) Bit Definitions - Currently commented out for future use */
+/*
+#define MULTI_MFEN  7       // Multicast/Broadcast filter enable in UDP mode
+#define BCASTB      6       // Broadcast blocking bit
+#define ND_MC_MMB   5       // No Delayed ACK/Multicast/Multicast blocking bit
+#define UCASTB_MIP6B 4      // Unicast blocking/IPv6 blocking bit
+*/
+
+/* Socket Type Values for Mode Register */
+#define SOCK_TYPE_CLOSED    0x00    /* Socket is closed - no protocol active */
+
+/*===================================================================================*/
+/*                                KEEP ALIVE SETT.                                   */
+/*===================================================================================*/
+// W5500 TCP Keep-Alive time register (Sn_KPALVTR)
+// Each step = 5 seconds
+
+#define KA_DISABLE         0x00   // Disable auto keep-alive
+#define KA_5SEC            0x01   // 5 seconds
+#define KA_10SEC           0x02   // 10 seconds
+#define KA_15SEC           0x03   // 15 seconds
+#define KA_20SEC           0x04   // 20 seconds
+#define KA_30SEC           0x06   // 30 seconds
+#define KA_1MIN            0x0C   // 60 seconds
+#define KA_2MIN            0x18   // 120 seconds
+#define KA_5MIN            0x3C   // 300 seconds
+#define KA_10MIN           0x78   // 600 seconds
+#define KA_20MIN           0xF0   // 1200 seconds
+
+/*===================================================================================*/
+/*                                ENUMERATIONS                                      */
+/*===================================================================================*/
+
+/* Socket Types - Different protocols that can be used */
+typedef enum SockType {
+    SOCK_TYPE_TCP    = 0x01,   /* TCP protocol - reliable, connection-oriented */
+    SOCK_TYPE_UDP    = 0x02,   /* UDP protocol - fast, connectionless */
+    SOCK_TYPE_MACRAW = 0x04    /* Raw Ethernet - direct MAC layer access */
+} sock_type_t;
+
+/* Socket Commands - Operations that can be performed on sockets */
+typedef enum SockCmd {
+    SOCK_CMD_OPEN       = 0x01,    /* Open socket with specified protocol */
+    SOCK_CMD_LISTEN     = 0x02,    /* Start listening for connections (TCP server) */
+    SOCK_CMD_CONNECT    = 0x04,    /* Connect to remote host (TCP client) */
+    SOCK_CMD_DISCON     = 0x08,    /* Disconnect from remote host */
+    SOCK_CMD_CLOSE      = 0x10,    /* Close socket and free resources */
+    SOCK_CMD_SEND       = 0x20,    /* Send data in TX buffer */
+    SOCK_CMD_SEND_MAC   = 0x21,    /* Send data with MAC address (MACRAW) */
+    SOCK_CMD_SEND_KEEP  = 0x22,    /* Send keep-alive packet */
+    SOCK_CMD_RECV       = 0x40     /* Receive data to RX buffer */
+} sock_cmd_t;
+
+/* Socket Interrupt Types - Different events that can trigger interrupts */
+typedef enum SockISRType {
+    SOCK_IR_CON,        /* Connection established interrupt */
+    SOCK_IR_DISCON,     /* Disconnection occurred interrupt */
+    SOCK_IR_RECV,       /* Data received interrupt */
+    SOCK_IR_TIMEOUT,    /* Operation timeout interrupt */
+    SOCK_IR_SEND_OK,    /* Data sent successfully interrupt */
+    
+    NUM_OF_SOCK_IRS     /* Total number of interrupt types (not a Wiznet value) */
+} sock_isr_type_t;
+
+/* Socket Status Values - Different states a socket can be in */
+typedef enum SockStatus {
+    /* Standard Wiznet Status Values */
+    SOCK_STATUS_CLOSED        = 0x00,    /* Socket is closed */
+    SOCK_STATUS_INIT          = 0x13,    /* Socket initialized but not connected */
+    SOCK_STATUS_LISTEN        = 0x14,    /* Socket listening for connections (TCP server) */
+    SOCK_STATUS_ESTABLISHED   = 0x17,    /* Connection established (TCP) */
+    SOCK_STATUS_CLOSE_WAIT    = 0x1C,    /* Waiting for close confirmation */
+    SOCK_STATUS_UDP           = 0x22,    /* Socket operating in UDP mode */
+    SOCK_STATUS_MACRAW        = 0x42,    /* Socket operating in MACRAW mode */
+
+    /* Additional Wiznet TCP transitional states (from datasheet) */
+    SOCK_STATUS_SYNSENT       = 0x15,    /* Actively trying to establish a connection */
+    SOCK_STATUS_SYNRECV       = 0x16,    /* Connection request received, sending SYN/ACK */
+    SOCK_STATUS_FIN_WAIT      = 0x18,    /* Connection closing: local socket closed, waiting for remote */
+    SOCK_STATUS_CLOSING       = 0x1A,    /* Both sides have sent FIN, waiting for final ACK */
+    SOCK_STATUS_TIME_WAIT     = 0x1B,    /* Waiting for enough time to pass to avoid new connection confusion */
+    SOCK_STATUS_LAST_ACK      = 0x1D,    /* Waiting for ACK of FIN after remote close */
+		
+		  /* Custom Error Status Values (not from Wiznet hardware) */
+    SOCK_STATUS_NUM_EXCEEDED  = -2,     /* Maximum number of sockets exceeded */
+    SOCK_STATUS_MACRAW_TAKEN  = -3,     /* MACRAW socket already in use */
+    SOCK_STATUS_CANT_OPEN     = -4,     /* Failed to open socket */
+    SOCK_STATUS_CANT_CLOSE    = -5,     /* Failed to close socket */
+    SOCK_STATUS_TIMEOUT       = -6,     /* Connection attempt timed out */
+    SOCK_STATUS_RESET         = -7,     /* Connection reset by peer */
+    SOCK_STATUS_SEND_FAIL     = -8,     /* Failed to send data */
+    SOCK_STATUS_RECV_FAIL     = -9,     /* Failed to receive data */
+    SOCK_STATUS_UNSUPPORTED   = -10,    /* Unsupported mode or operation */
+    SOCK_STATUS_INVALID_ARG   = -11,    /* Invalid argument passed to API */
+    SOCK_STATUS_NOT_READY     = -12,    /* Socket not ready for operation */
+    SOCK_STATUS_BUSY          = -13     /* Socket is busy with another operation */
+} sock_status_t;
+
+/*===================================================================================*/
+/*                              STRUCTURE DEFINITIONS                               */
+/*===================================================================================*/
+
+/* Forward Declarations */
+typedef struct Wiznet wiznet_t;
+typedef struct Socket socket_t;
+
+/*
+ * Wiznet Structure - Represents a single W5500 Ethernet controller chip
+ * Contains all configuration and state information for the chip
+ */
+typedef struct Wiznet {
+    /*--- Private Members (internal use only) ---*/
+    int8_t  _id;                                /* Unique identifier for this Wiznet chip */
+    uint8_t _sockets_cnt;                       /* Number of active sockets */
+    uint8_t _sockets_taken;                     /* Bit mask showing which sockets are in use */
+    socket_t *_sockets[NUM_OF_SOCKETS];         /* Array of pointers to socket structures */
+
+    /*--- Hardware Interface Configuration (MS51 microcontroller specific) ---*/
+	/*
+	this is taken care by macro's in wiznet_header.h
+    uint8_t CS_Port;                            // Chip Select port number (0 for P0, 1 for P1, etc.) 
+    uint8_t CS_Pin;                             // Chip Select pin number (0-7) 
+    uint8_t RST_Port;                           // Reset signal port number 
+    uint8_t RST_Pin;                            // Reset signal pin number 
+  */
+    /*--- Public Network Configuration ---*/
+    uint8_t mac_addr[6];                        /* MAC address of this network interface */
+    uint8_t ip_addr[4];                         /* IP address assigned to this interface */
+    uint8_t ip_gateway_addr[4];                 /* Gateway IP address for routing */
+    uint8_t subnet_mask[4];                     /* Subnet mask for network segmentation */
+} Wiznet;
+
+/*
+ * Socket Structure - Represents a network socket of any type (TCP, UDP, or MACRAW)
+ * Contains all information needed to manage network communication through one socket
+ */
+struct Socket {
+    /*--- Private Members (internal use only) ---*/
+    int8_t _id;                                 /* Socket ID (0-7, matches Wiznet hardware socket number) */
+    wiznet_t *_host_wiznet;                     /* Pointer to the Wiznet chip that owns this socket */
+
+    /*--- Public Socket Configuration ---*/
+    uint8_t type;                               /* Socket protocol type (TCP, UDP, or MACRAW) */
+    sock_status_t status;                       /* Current status/state of the socket */
+    uint8_t ip[4];                              /* Remote IP address for this connection */
+    uint16_t port;                              /* Local port number (source port) */
+    uint16_t dest_port;                         /* Remote port number (destination port) */
+    uint8_t macraw_dst[6];                      /* Destination MAC address (used in MACRAW mode) */
+};
+
+/*===================================================================================*/
+/*                               FUNCTION PROTOTYPES                                */
+/*===================================================================================*/
+
+/*--- System Initialization Functions ---*/
+void Timer0_Init(void);                         /* Initialize system timer for network operations */
+
+/*--- Wiznet Management Functions ---*/
+wiznet_t wiznet_t_init(void);                   /* Initialize Wiznet structure with default values */
+int32_t wiznet_init(wiznet_t *wiznet);          /* Initialize Wiznet hardware and configure chip */
+void wiznet_deinit(wiznet_t *wiznet);           /* Cleanup and shutdown Wiznet chip */
+void wiznet_hw_reset(void);                     /* Perform hardware reset of Wiznet chip */
+uint8_t wiznet_get_version(void);               /* Read hardware version from chip */
+// ---> for flash space(NOT USED) ->void wiznet_isr_handler(wiznet_t *wiznet);      /* Handle interrupts from Wiznet chip */
+
+/*--- Socket Management Functions ---*/
+socket_t socket_t_init(void);                   /* Initialize socket structure with default values */
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock);  /* Create new socket on specified Wiznet */
+void sock_reset(socket_t *sock);                /* Reset socket to initial state */
+void sock_deinit(socket_t *sock);               /* Cleanup and free socket resources */
+
+/*--- Socket Operation Functions ---*/
+uint8_t sock_open(socket_t *sock);              /* Open socket with configured protocol type */
+void sock_connect(socket_t *sock);              /* Connect to remote host (TCP client mode) */
+void sock_discon(socket_t *sock);               /* Disconnect from remote host */
+void sock_close(socket_t *sock);                /* Close socket and release hardware resources */
+void reset_socket_for_reconnection(wiznet_t *wiznet, socket_t *sock);  /* Reset socket for reuse */
+uint8_t check_socket_status(socket_t *sock);    /* Check current status of socket */
+void socket_enable_keepalive(socket_t *sock, uint8_t interval);
+// ---> for flash space(NOT USED) ->void enable_interrupts(void);                   /* Enable interrupt handling system */
+
+/*--- Data Communication Functions ---*/
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len);           /* Send data through socket */
+uint8_t safe_sendto(socket_t *sock, uint8_t *data_t, uint16_t len);   /* Send data with error checking */
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size);       /* Receive data into provided buffer */
+// ---> for flash space(NOT USED) ->uint16_t recv_alloc(socket_t *sock, uint8_t **buf);                   /* Receive data with automatic buffer allocation */
+
+#endif /* WIZNET_H_ */
+
+
+/////////////////////////////////////////////////////////////////////////
+

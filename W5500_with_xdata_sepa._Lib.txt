@@ -1,0 +1,717 @@
+The previous codes, which we worked during the initial days of the W5500 integration was with the library which
+was available from the BSP. Later when we created a project on our own, the main RAM space wasn't sufficient and 
+the space was not sufficient for all the variables which we created. So replaced few variable to auxilliary RAM space
+
+
+#include "ethernet.h"
+#include "peripherals.h"
+#include "MS51_32K.h"
+#include "ip_header.h"
+
+#define WIZNET_CS_ASSERT()      (P1 &= ~(1 << 5))
+#define WIZNET_CS_DEASSERT()    (P1 |= (1 << 5))
+#define WIZNET_CS_TOGGLE()      (P1 ^= (1 << 5))
+
+#define WIZNET_RESET_ASSERT()   (P3 &= ~0x10)
+#define WIZNET_RESET_DEASSERT() (P3 |= 0x10)
+#define WIZNET_RESET_TOGGLE()   (P3 ^= 0x10)
+
+#define MAX_TCP_SEGMENT_SIZE 1460
+
+#define IAWT 31249
+
+#define W5500_RWB_READ  (0 << 2)
+#define W5500_RWB_WRITE (1 << 2)
+#define W5500_OM_VDM    0x00
+
+bit BIT_TMP;  // single definition
+
+xdata int wiznets_cnt = 0;
+xdata wiznet_t *wiznets[NUM_OF_WIZNETS];
+
+extern socket_t socket2;
+extern void lcd_clear(void);
+extern void lcd_goto(unsigned char row, unsigned char col);
+extern void lcd_print(char *str);
+void lcd_print_status_fail(sock_status_t status);
+
+const uint8_t sock_n_registers[NUM_OF_SOCKETS] = {
+    SOCKET_0_REGISTERS, SOCKET_1_REGISTERS, SOCKET_2_REGISTERS, SOCKET_3_REGISTERS,
+    SOCKET_4_REGISTERS, SOCKET_5_REGISTERS, SOCKET_6_REGISTERS, SOCKET_7_REGISTERS
+};
+
+const uint8_t sock_n_tx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_TX_BUFFER, SOCKET_1_TX_BUFFER, SOCKET_2_TX_BUFFER, SOCKET_3_TX_BUFFER,
+    SOCKET_4_TX_BUFFER, SOCKET_5_TX_BUFFER, SOCKET_6_TX_BUFFER, SOCKET_7_TX_BUFFER
+};
+
+const uint8_t sock_n_rx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_RX_BUFFER, SOCKET_1_RX_BUFFER, SOCKET_2_RX_BUFFER, SOCKET_3_RX_BUFFER,
+    SOCKET_4_RX_BUFFER, SOCKET_5_RX_BUFFER, SOCKET_6_RX_BUFFER, SOCKET_7_RX_BUFFER
+};
+
+static void _spi_write(uint16_t addr, uint8_t block, uint8_t *data_t, uint16_t len)
+{
+    xdata uint8_t addr_high = (uint8_t)((addr >> 8) & 0xFF);
+    xdata uint8_t addr_low  = (uint8_t)(addr & 0xFF);
+    xdata uint8_t control_phase = (block << 3) | W5500_RWB_WRITE | W5500_OM_VDM;
+    xdata uint16_t i = 0;
+	
+    WIZNET_CS_ASSERT();
+
+    Spi_Write_Byte(addr_high);
+    Spi_Write_Byte(addr_low);
+    Spi_Write_Byte(control_phase);
+
+    for (i = 0; i < len; i++) {
+        Spi_Write_Byte(data_t[i]);
+    }
+
+    WIZNET_CS_DEASSERT();
+}
+
+static void _spi_read(uint16_t addr, uint8_t block, uint8_t *buf, uint16_t len)
+{
+    xdata uint8_t addr_high = (uint8_t)((addr >> 8) & 0xFF);
+    xdata uint8_t addr_low  = (uint8_t)(addr & 0xFF);
+    xdata uint8_t control_phase = (block << 3) | W5500_RWB_READ | W5500_OM_VDM;
+    xdata uint16_t i = 0;
+	
+    WIZNET_CS_ASSERT();
+
+    Spi_Write_Byte(addr_high);
+    Spi_Write_Byte(addr_low);
+    Spi_Write_Byte(control_phase);
+
+    for (i = 0; i < len; i++) {
+        buf[i] = Spi_Read_Byte(0xFF);
+    }
+
+    WIZNET_CS_DEASSERT();
+}
+
+bool is_phy_link_up(void)
+{
+    xdata uint8_t phy_status = 0;
+    xdata uint32_t timeout_counter = 0;
+    xdata uint8_t i = 0;
+
+    do {
+        _spi_read(PHYCFGR, COMMON_REGISTERS, &phy_status, 1);
+        timeout_counter++;
+        Timer2_DELAY(1, DELAY_UNIT_MS);
+        if (timeout_counter > TIMEOUT_WIZNET_RESET) {
+            return false;
+        }
+    } while (!(phy_status & (1 << PHYCFGR_RST)));
+
+    Timer2_DELAY(100, DELAY_UNIT_MS);
+
+    for (i = 0; i < 200; i++) {
+        _spi_read(PHYCFGR, COMMON_REGISTERS, &phy_status, 1);
+        if (phy_status & (1 << LNK)) {
+            return true;
+        }
+        Timer2_DELAY(1, DELAY_UNIT_MS);
+    }
+
+    return false;
+}
+
+static void wiznet_hw_reset(void)
+{
+    xdata uint8_t phy_status;
+    xdata uint32_t timeout_counter;
+
+    timeout_counter = 0;
+
+    WIZNET_RESET_ASSERT();
+    Timer2_DELAY(100, DELAY_UNIT_MS);
+    WIZNET_RESET_DEASSERT();
+    Timer2_DELAY(100, DELAY_UNIT_MS);
+
+    while (1)
+    {
+        _spi_read(PHYCFGR, COMMON_REGISTERS, &phy_status, 1);
+
+        if ((phy_status & (1 << PHYCFGR_RST)) && (phy_status & (1 << LNK)))
+        {
+            break;
+        }
+
+        timeout_counter++;
+
+        if (timeout_counter > TIMEOUT_WIZNET_RESET)
+        {
+            lcd_clear();
+            lcd_goto(0, 0);
+            lcd_print("PHY_Lnk_Not_Rdy");
+            break;
+        }
+
+        Timer2_DELAY(1, DELAY_UNIT_MS);
+    }
+}
+
+wiznet_t wiznet_t_init(void)
+{
+    wiznet_t wiznet;
+    xdata uint8_t i;
+
+    wiznet._id = -1;
+    wiznet._sockets_cnt = 0;
+    wiznet._sockets_taken = 0x00;
+
+    for (i = 0; i < NUM_OF_SOCKETS; i++)
+    {
+        wiznet._sockets[i] = NULL;
+    }
+
+    P34_PUSHPULL_MODE;
+    P34 = 1;
+
+    for (i = 0; i < 6; i++)
+    {
+        wiznet.mac_addr[i] = 0;
+    }
+
+    for (i = 0; i < 4; i++)
+    {
+        wiznet.ip_addr[i] = 0;
+    }
+
+    for (i = 0; i < 4; i++)
+    {
+        wiznet.ip_gateway_addr[i] = 0;
+    }
+
+    for (i = 0; i < 4; i++)
+    {
+        wiznet.subnet_mask[i] = 0;
+    }
+
+    return wiznet;
+}
+
+int32_t wiznet_init(wiznet_t *wiznet)
+{
+    xdata uint32_t i;
+    xdata uint16_t i_awt;
+    xdata uint8_t version;
+
+    static xdata uint8_t is_first_wiznet = 1;
+
+    if (is_first_wiznet)
+    {
+        is_first_wiznet = 0;
+        for (i = 0; i < NUM_OF_WIZNETS; i++)
+        {
+            wiznets[i] = NULL;
+        }
+    }
+
+    if (wiznets_cnt >= NUM_OF_WIZNETS)
+    {
+        return -1;
+    }
+    else
+    {
+        for (i = 0; i < NUM_OF_WIZNETS; i++)
+        {
+            if (wiznets[i] == NULL)
+            {
+                wiznets[i] = wiznet;
+                wiznet->_id = i;
+                break;
+            }
+        }
+        wiznets_cnt++;
+    }
+
+    wiznet_hw_reset();
+
+    i_awt = IAWT;
+    i_awt = SWAP_TWO_BYTES(i_awt);
+    _spi_write(INTLEVEL, COMMON_REGISTERS, (uint8_t *)&i_awt, sizeof(uint16_t));
+
+    _spi_write(SHAR, COMMON_REGISTERS, wiznet->mac_addr, 6);
+    _spi_write(SIPR, COMMON_REGISTERS, wiznet->ip_addr, 4);
+    _spi_write(GAR, COMMON_REGISTERS, wiznet->ip_gateway_addr, 4);
+    _spi_write(SUBR, COMMON_REGISTERS, wiznet->subnet_mask, 4);
+
+    version = wiznet_get_version();
+
+    return (version == 4) ? 0 : -1;
+}
+
+uint8_t wiznet_get_version(void)
+{
+    xdata uint8_t version = 0;
+    _spi_read(VERSIONR, COMMON_REGISTERS, &version, sizeof(uint8_t));
+    return version;
+}
+
+socket_t socket_t_init(void)
+{
+    socket_t sock;
+
+    sock._id = 1;
+    sock._host_wiznet = NULL;
+
+    sock.type = SOCK_TYPE_CLOSED;
+    sock.status = SOCK_STATUS_CLOSED;
+
+    sock.ip[0] = 0;
+    sock.ip[1] = 0;
+    sock.ip[2] = 0;
+    sock.ip[3] = 0;
+
+    sock.macraw_dst[0] = 0;
+    sock.macraw_dst[1] = 0;
+    sock.macraw_dst[2] = 0;
+    sock.macraw_dst[3] = 0;
+    sock.macraw_dst[4] = 0;
+    sock.macraw_dst[5] = 0;
+
+    sock.port = 0;
+    sock.dest_port = 0;
+
+    return sock;
+}
+
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock)
+{
+    xdata uint8_t i;
+    xdata uint8_t sock_n_register;
+    xdata uint8_t byte;
+    xdata uint16_t max_sgmnt_size;
+    xdata uint8_t tmpbuf[2];
+
+    if (wiznet->_sockets_cnt >= NUM_OF_SOCKETS) {
+        sock->status = SOCK_STATUS_NUM_EXCEEDED;
+        return sock->status;
+    }
+
+    if (sock->type == SOCK_TYPE_MACRAW) {
+        if (((1 << 0) & wiznet->_sockets_taken) == 0) {
+            sock->_id = 0;
+        } else {
+            sock->status = SOCK_STATUS_MACRAW_TAKEN;
+            return sock->status;
+        }
+    } else if (wiznet->_sockets_taken == 0xFE) {
+        sock->_id = 0;
+    } else {
+        for (i = 1; i < NUM_OF_SOCKETS; i++) {
+            if (((1 << i) & wiznet->_sockets_taken) == 0) {
+                sock->_id = i;
+                break;
+            }
+        }
+    }
+
+    sock->_host_wiznet = wiznet;
+    sock_n_register = sock_n_registers[sock->_id];
+
+    switch (sock->type) {
+        case SOCK_TYPE_UDP:
+            byte = SOCK_TYPE_UDP;
+            break;
+
+        case SOCK_TYPE_TCP:
+            byte = SOCK_TYPE_TCP;
+            max_sgmnt_size = MAX_TCP_SEGMENT_SIZE;
+            tmpbuf[0] = (uint8_t)((max_sgmnt_size >> 8) & 0xFF);
+            tmpbuf[1] = (uint8_t)(max_sgmnt_size & 0xFF);
+            _spi_write(Sn_MSSR, sock_n_register, tmpbuf, 2);
+            break;
+
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_TYPE_MACRAW;
+            _spi_write(Sn_DHAR, sock_n_register, sock->macraw_dst, 6);
+            break;
+
+        default:
+            byte = 0;
+            break;
+    }
+
+    _spi_write(Sn_MR, sock_n_register, &byte, 1);
+
+    if (sock->type != SOCK_TYPE_MACRAW) {
+        tmpbuf[0] = (uint8_t)((sock->port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->port & 0xFF);
+        _spi_write(Sn_PORT, sock_n_register, tmpbuf, 2);
+
+        tmpbuf[0] = (uint8_t)((sock->dest_port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->dest_port & 0xFF);
+        _spi_write(Sn_DPORT, sock_n_register, tmpbuf, 2);
+
+        _spi_write(Sn_DIPR, sock_n_register, sock->ip, 4);
+    }
+
+    sock->status = SOCK_STATUS_INIT;
+
+    if (sock->status > 0) {
+        wiznet->_sockets_cnt++;
+        wiznet->_sockets_taken |= (1 << sock->_id);
+        wiznet->_sockets[sock->_id] = sock;
+    } else {
+        sock->_id = -1;
+        sock->_host_wiznet = NULL;
+    }
+
+    return sock->status;
+}
+
+void sock_reset(socket_t *sock)
+{
+		xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+		xdata uint8_t byte = 0;
+		xdata uint8_t two_bytes[2] = {0, 0};
+		xdata uint8_t four_bytes[4] = {0, 0, 0, 0};
+		xdata uint8_t six_bytes[6] = {0, 0, 0, 0, 0, 0};
+
+		_spi_write(Sn_MR, sock_n_register, &byte, sizeof(uint8_t));
+		_spi_write(Sn_PORT, sock_n_register, two_bytes, sizeof(two_bytes));
+		_spi_write(Sn_DPORT, sock_n_register, two_bytes, sizeof(two_bytes));
+		_spi_write(Sn_MSSR, sock_n_register, two_bytes, sizeof(two_bytes));
+		_spi_write(Sn_DHAR, sock_n_register, six_bytes, sizeof(six_bytes));
+		_spi_write(Sn_DIPR, sock_n_register, four_bytes, sizeof(four_bytes));
+}
+
+void sock_deinit(socket_t *sock)
+{
+		xdata uint8_t byte;
+
+		sock_reset(sock);
+
+		_spi_read(SIMR, COMMON_REGISTERS, &byte, 1);
+		byte &= ~(1 << sock->_id);
+		_spi_write(SIMR, COMMON_REGISTERS, &byte, 1);
+
+		if (sock->_host_wiznet->_sockets_cnt > 0) {
+			sock->_host_wiznet->_sockets_cnt--;
+		}
+
+		sock->_host_wiznet->_sockets_taken &= ~(1 << sock->_id);
+		sock->_host_wiznet->_sockets[sock->_id] = NULL;
+}
+
+uint8_t sock_open(socket_t *sock)
+{
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    xdata uint8_t cmd, status = 0;
+    xdata uint32_t timeout_counter = 0;
+
+    _spi_read(Sn_SR, sock_n_register, &status, 1);
+    if (status != SOCK_STATUS_CLOSED) {
+        cmd = SOCK_CMD_CLOSE;
+        _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+        do {
+            _spi_read(Sn_SR, sock_n_register, &status, 1);
+        } while (status != SOCK_STATUS_CLOSED);
+    }
+
+    cmd = SOCK_CMD_OPEN;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+
+    timeout_counter = 0;
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+
+        if ((sock->type == SOCK_TYPE_UDP && status == SOCK_STATUS_UDP) ||
+            (sock->type == SOCK_TYPE_TCP && status == SOCK_STATUS_INIT) ||
+            (sock->type == SOCK_TYPE_MACRAW && status == SOCK_STATUS_MACRAW)) {
+            sock->status = status;
+            return 1;
+        }
+
+        Timer2_DELAY(10, DELAY_UNIT_MS);
+        timeout_counter += 10;
+
+    } while (timeout_counter < TIMEOUT_SOCKET_OPEN);
+
+    cmd = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+    } while (status != SOCK_STATUS_CLOSED);
+
+    sock->status = status;
+    return 0;
+}
+
+void sock_connect(socket_t *sock)
+{
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    xdata uint8_t byte = SOCK_CMD_CONNECT;
+    xdata uint8_t status = 0;
+    xdata uint32_t timeout_counter = 0;
+
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    while (timeout_counter < TIMEOUT_SOCKET_CONNECT) {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+
+        if (status == SOCK_STATUS_ESTABLISHED) {
+            sock->status = SOCK_STATUS_ESTABLISHED;
+            return;
+        }
+
+        Timer2_DELAY(50, DELAY_UNIT_MS);
+        timeout_counter += 50;
+    }
+}
+
+void sendto(socket_t *sock,uint8_t *data_t, uint16_t len)
+{
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    xdata uint16_t sock_n_tx_buffer = sock_n_tx_buffers[sock->_id];
+    xdata uint16_t tx_buf_free_size = 0;
+    xdata uint16_t tx_start_ptr = 0, tx_end_ptr = 0;
+    xdata uint8_t byte = 0;
+    xdata uint8_t need_to_fragment = 0;
+    xdata uint8_t *ptr_to_next_fragment = NULL;
+    xdata uint16_t len_of_next_fragment = 0;
+
+    _spi_read(Sn_TX_FSR, sock_n_register, (uint8_t *)&tx_buf_free_size, sizeof(uint16_t));
+    tx_buf_free_size = SWAP_TWO_BYTES(tx_buf_free_size);
+
+    if (tx_buf_free_size < len) {
+        need_to_fragment = 1;
+        ptr_to_next_fragment = data_t + tx_buf_free_size;
+        len_of_next_fragment = len - tx_buf_free_size;
+        len = tx_buf_free_size;
+    }
+
+    _spi_read(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_start_ptr, sizeof(uint16_t));
+    _spi_write(tx_start_ptr, sock_n_tx_buffer, data_t, len);
+
+    tx_end_ptr = tx_start_ptr + len;
+    _spi_write(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_end_ptr, sizeof(uint16_t));
+
+    switch (sock->type) {
+        case SOCK_TYPE_TCP:
+        case SOCK_TYPE_UDP:
+            byte = SOCK_CMD_SEND;
+            break;
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_CMD_SEND_MAC;
+            break;
+        default:
+            byte = 0;
+            break;
+    }
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    if (need_to_fragment) {
+        sendto(sock, ptr_to_next_fragment, len_of_next_fragment);
+    }
+}
+
+uint16_t recv(socket_t *sock,uint8_t *buf, uint16_t buf_size)
+{
+    xdata uint8_t sock_n_register;
+    xdata uint16_t sock_n_rx_buffer;
+    xdata uint16_t rx_start_ptr;
+    xdata uint16_t rx_end_ptr;
+    xdata uint16_t len_of_received_data;
+    xdata uint16_t first_chunk_len;
+    xdata uint16_t second_chunk_len;
+    xdata uint8_t byte;
+
+    sock_n_register = sock_n_registers[sock->_id];
+    sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+
+    _spi_read(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _spi_read(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0;
+    } else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr + 1;
+    } else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+    }
+
+    if (len_of_received_data > buf_size) {
+        len_of_received_data = buf_size;
+    }
+
+    if (rx_end_ptr < rx_start_ptr) {
+        first_chunk_len = 0xFFFF - rx_start_ptr + 1;
+        if (first_chunk_len > len_of_received_data) {
+            first_chunk_len = len_of_received_data;
+            second_chunk_len = 0;
+        } else {
+            second_chunk_len = len_of_received_data - first_chunk_len;
+        }
+
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, first_chunk_len);
+
+        if (second_chunk_len > 0) {
+            _spi_read(0, sock_n_rx_buffer, buf + first_chunk_len, second_chunk_len);
+        }
+    } else {
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, len_of_received_data);
+    }
+
+    rx_start_ptr = rx_start_ptr + len_of_received_data;
+    _spi_write(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+
+    byte = SOCK_CMD_RECV;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+
+void sock_discon(socket_t *sock)
+{
+		xdata uint8_t sock_n_register;
+		xdata uint8_t byte;
+		xdata uint8_t status;
+		xdata uint32_t retry_counter = 0;
+
+		sock_n_register = sock_n_registers[sock->_id];
+
+		byte = SOCK_CMD_DISCON;
+		_spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+		while (1)
+		{
+			_spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+			if (status == SOCK_STATUS_CLOSED) {
+				sock->status = SOCK_STATUS_CLOSED;
+				break;
+			}
+			else if (retry_counter++ > 5000)
+			{
+				sock->status = SOCK_STATUS_CANT_CLOSE;
+				break;
+			}
+		}
+}
+
+void sock_close(socket_t *sock)
+{
+    xdata uint8_t sock_n_register;
+    xdata uint8_t byte;
+    xdata uint8_t status;
+    xdata uint32_t retry_counter = 0;
+
+    sock_n_register = sock_n_registers[sock->_id];
+    byte = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    while (1) {
+        _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        } else if (retry_counter++ > 5000) {
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+uint8_t safe_sendto(socket_t *sock,uint8_t *data_t, uint16_t len)
+{
+    xdata uint8_t status;
+    status = check_socket_status(sock);
+
+    if (status == SOCK_STATUS_ESTABLISHED) {
+        sendto(sock, data_t, len);
+        return 1;
+    }
+
+    return 0;
+}
+
+uint8_t check_socket_status(socket_t *sock)
+{
+    xdata uint8_t status = 0;
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+    return status;
+}
+
+void reset_socket_for_reconnection(wiznet_t *wiznet, socket_t *sock)
+{
+    xdata uint8_t status_reg = 0;
+    xdata uint16_t timeout_counter = 0;
+    
+    status_reg = check_socket_status(sock);
+    
+    if (status_reg == SOCK_STATUS_ESTABLISHED || status_reg == SOCK_STATUS_CLOSE_WAIT) {
+        sock_discon(sock);
+        
+        timeout_counter = 0;
+        do {
+            status_reg = check_socket_status(sock);
+            Timer2_DELAY(10, DELAY_UNIT_MS);
+            timeout_counter += 10;
+        } while (status_reg != SOCK_STATUS_CLOSED && timeout_counter <= TIMEOUT_SOCKET_DISCON);
+        
+        if (status_reg != SOCK_STATUS_CLOSED) {
+            lcd_clear(); lcd_goto(0,0); lcd_print("Err: DISCON fail");
+            Timer2_DELAY(200, DELAY_UNIT_MS);
+        }
+    } 
+    else if (status_reg >= SOCK_STATUS_SYNSENT && status_reg <= SOCK_STATUS_LAST_ACK) {
+        sock_close(sock);
+    }
+    
+    sock_close(sock);
+    
+    timeout_counter = 0;
+    do {
+        status_reg = check_socket_status(sock);
+        Timer2_DELAY(10, DELAY_UNIT_MS);
+        timeout_counter += 10;
+    } while (status_reg != SOCK_STATUS_CLOSED && timeout_counter <= TIMEOUT_SOCKET_CLOSE);
+    
+    if (status_reg != SOCK_STATUS_CLOSED) {
+        lcd_clear(); lcd_goto(0,0); lcd_print("Err: CLOSE fail");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+    
+    sock_deinit(sock);
+    *sock = socket_t_init();
+    
+    sock->type = SOCK_TYPE_TCP;
+    sock->port = SRC_PORT;
+    sock->dest_port = DST_PORT;
+    sock->ip[0] = DST_IP_0;
+    sock->ip[1] = DST_IP_1;
+    sock->ip[2] = DST_IP_2;
+    sock->ip[3] = DST_IP_3;
+    
+    if (socket(wiznet, sock) <= 0) {
+        lcd_clear(); lcd_goto(0,0); lcd_print("Err: Sock init");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+    
+    Timer2_DELAY(100, DELAY_UNIT_MS);
+    
+    if (!sock_open(sock)) {
+        lcd_clear(); lcd_goto(0,0); lcd_print("Err: Sock open");
+        Timer2_DELAY(200, DELAY_UNIT_MS);
+    }
+    
+    Timer2_DELAY(200, DELAY_UNIT_MS);
+    sock_connect(sock);
+    Timer2_DELAY(300, DELAY_UNIT_MS);
+    socket_enable_keepalive(sock, KA_10SEC);
+}
+
+void socket_enable_keepalive(socket_t *sock,uint8_t interval)
+{
+		xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+		xdata uint8_t reg_value = interval;
+
+		_spi_write(Sn_KPALVTR, sock_n_register, &reg_value, sizeof(uint8_t));
+}

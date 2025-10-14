@@ -1,0 +1,55 @@
+#include "ms51_32k_keil.h"
+
+#define LED P11
+
+volatile unsigned int timer_overflows = 0;
+volatile unsigned int target_overflows = 0;
+
+void Timer3_ISR(void) interrupt 16
+{
+    if (++timer_overflows >= target_overflows)
+    {
+        LED ^= 1;
+        timer_overflows = 0;
+    }
+}
+
+void Timer3_Interrupt_frequency_in_MS(unsigned int ms)
+{
+    unsigned long ticks = (unsigned long)ms * 125UL;
+    unsigned int reload = 0;
+	
+    target_overflows = (ticks + 65535UL) / 65536UL;
+    
+    reload = 65536UL - (ticks / target_overflows);
+    
+    T3CON &= ~0x08;
+    RH3 = reload >> 8;
+    RL3 = reload & 0xFF;
+    timer_overflows = 0;
+    T3CON |= 0x08;
+}
+
+void Timer3_Interrupt_frequency_in_SEC(unsigned int sec)
+{
+    Timer3_Interrupt_frequency_in_MS(sec * 1000);
+}
+
+void Timer3_Init(void)
+{
+    T3CON = (T3CON & 0xF8) | 0x07;
+    EIE1 |= 0x02;
+    EA = 1;
+    T3CON |= 0x08;
+}
+
+void main(void)
+{
+    LED = 0;
+    P11_PUSHPULL_MODE;
+    Timer3_Init();
+    
+    Timer3_Interrupt_frequency_in_MS(800);
+    
+    while (1);
+}

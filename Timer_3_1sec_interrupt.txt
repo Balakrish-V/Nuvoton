@@ -1,0 +1,60 @@
+#include "ms51_32k_keil.h"
+
+#define LED P11  // Define LED pin
+
+volatile unsigned char overflow_count = 0;
+#define OVERFLOWS_NEEDED 2  // Count 2 overflows for ~1 second
+
+// Timer 3 Interrupt Service Routine
+void Timer3_ISR(void) interrupt 16
+{
+    overflow_count++;
+    
+    if (overflow_count >= OVERFLOWS_NEEDED)
+    {
+        LED ^= 1;  // Toggle LED
+        overflow_count = 0;
+    }
+    // TF3 is auto-cleared by hardware
+}
+
+// Timer 3 Initialization for 1-second interval
+void Timer3_Init(void)
+{
+    // Set Timer 3 prescaler to 128 (T3PS[2:0] = 111)
+    T3CON &= 0xF8;       // Clear prescaler bits
+    T3CON |= 0x07;       // Set prescaler to 128
+    
+    // Calculate reload value for ~0.524 second per overflow
+    // System clock = 16 MHz, tick = 16,000,000 / 128 = 125,000 Hz
+    // For max count: 65536 ticks = 0.524288 seconds
+    // 2 overflows = 1.048576 seconds (close to 1 second)
+    // For exactly 0.5 seconds: 125000 / 2 = 62500 ticks
+    // Reload = 65536 - 62500 = 3036 = 0x0BDC
+    
+    RH3 = 0x0B;          // High byte of reload value
+    RL3 = 0xDC;          // Low byte of reload value
+    
+    // Enable Timer 3 interrupt
+    EIE1 |= 0x02;        // ET3 = 1
+    
+    // Start Timer 3
+    T3CON |= 0x08;       // TR3 = 1
+    
+    // Enable global interrupts
+    EA = 1;
+}
+
+void main(void)
+{
+    LED = 0;             // Initialize LED state
+    P11_PUSHPULL_MODE;   // Set P11 as push-pull output
+    
+    Timer3_Init();       // Initialize Timer 3
+    
+    while (1)
+    {
+        // Main loop remains idle
+        // LED toggling handled by Timer 3 interrupt
+    }
+}

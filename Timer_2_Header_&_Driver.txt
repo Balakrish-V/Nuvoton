@@ -1,0 +1,59 @@
+#include "spi.h"  //can be old spi driver or new spi driver
+
+/**
+ * Timer2 Based Precision Delay Function
+ * 
+ * Creates accurate delays using Timer2 hardware module. This function provides
+ * precise timing delays that are independent of CPU clock variations and more
+ * accurate than simple loop-based delays.
+ * 
+ * @param time: Duration of delay (1-65535)
+ * @param unit: Time unit - DELAY_UNIT_MS for milliseconds, DELAY_UNIT_SEC for seconds
+ * 
+ * Examples:
+ *   Timer2_DELAY(500, DELAY_UNIT_MS);  // 500 millisecond delay
+ *   Timer2_DELAY(2, DELAY_UNIT_SEC);   // 2 second delay
+ */
+void Timer2_DELAY(unsigned int time, unsigned char unit)
+{
+    /*--- Calculate Total Number of Timer Cycles Needed ---*/
+    /* Convert time to milliseconds: if unit is MS use time directly, if SEC multiply by 1000 */
+    unsigned long loops = (unit == DELAY_UNIT_MS) ? time : (time * 1000UL);
+    unsigned long i;
+    
+    /*--- Execute Delay Loop ---*/
+    /* Each loop iteration creates exactly 1 millisecond delay using Timer2 */
+    for (i = 0; i < loops; i++)
+    {
+        /*--- Configure Timer2 for 1ms Delay ---*/
+        T2MOD = 0x00;       /* Set Timer2 to normal 16-bit auto-reload mode */
+                           /* Normal mode: timer counts up and auto-reloads when it overflows */
+        
+        /*--- Set Timer2 Reload Values for 1ms Timing ---*/
+        RCMP2H = 0xC1;      /* Reload value high byte = 0xC1 (for 1ms timing) */
+        RCMP2L = 0x80;      /* Reload value low byte = 0x80 (total reload = 0xC180) */
+        
+        /*--- Initialize Timer2 Count Values ---*/
+        TH2 = 0xC1;         /* Set timer high byte to same value as reload high byte */
+        TL2 = 0x80;         /* Set timer low byte to same value as reload low byte */
+                           /* Starting with reload values ensures consistent 1ms timing */
+        
+        /*--- Prepare Timer2 for Operation ---*/
+        TF2 = 0;            /* Clear Timer2 overflow flag - ensures clean start */
+                           /* TF2 = 1 when timer overflows, TF2 = 0 means no overflow yet */
+        
+        /*--- Start Timer2 Counting ---*/
+        TR2 = 1;            /* Enable Timer2 to start counting (TR2 = Timer Run bit) */
+                           /* Timer now counts from 0xC180 up to 0xFFFF, then overflows */
+        
+        /*--- Wait for 1 Millisecond to Complete ---*/
+        while(!TF2);        /* Wait in loop until TF2 flag becomes 1 (overflow occurred) */
+                           /* When TF2 = 1, exactly 1 millisecond has passed */
+        
+        /*--- Clean Up After 1ms Delay ---*/
+        TF2 = 0;            /* Clear the overflow flag for next iteration */
+        TR2 = 0;            /* Stop Timer2 to save power and reset for next cycle */
+    }
+    
+    /* Function exits after creating precise delay of 'time' milliseconds or seconds */
+}
