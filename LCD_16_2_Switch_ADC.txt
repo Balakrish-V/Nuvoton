@@ -1,0 +1,132 @@
+#include "ms51_32k_keil.h"
+#include "function_define_ms51_32k.h"
+#include "adc_custom_h.h"
+
+bit BIT_TMP;
+
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+#define LCD_8BIT     8
+#define LCD_4BIT     4
+#define LCD_MODE     LCD_4BIT
+
+#define RS   P10
+#define EN   P33
+#define DATA P0    
+
+#define DELAY_UNIT_MS   1
+#define DELAY_UNIT_SEC  2
+
+void lcd_pulse(void)
+{
+    EN = 1;
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+    EN = 0;
+    Timer2_DELAY(2, DELAY_UNIT_MS);
+}
+
+void lcd_write(uint8_t value, uint8_t is_data)
+{
+    RS = is_data;
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+#if LCD_MODE == LCD_8BIT
+    DATA = value;
+    lcd_pulse();
+#elif LCD_MODE == LCD_4BIT
+    DATA = (DATA & 0x0F) | (value & 0xF0);
+    lcd_pulse();
+    DATA = (DATA & 0x0F) | ((value << 4) & 0xF0);
+    lcd_pulse();
+#endif
+    Timer2_DELAY(1, DELAY_UNIT_MS);
+}
+
+void lcd_cmd(uint8_t cmd)  { lcd_write(cmd, 0); }
+void lcd_data(uint8_t dat) { lcd_write(dat, 1); }
+
+void lcd_init(void)
+{
+#if LCD_MODE == LCD_8BIT
+    P0M1 = 0x00; P0M2 = 0xFF;
+#elif LCD_MODE == LCD_4BIT
+    P0M1 &= 0x0F; P0M2 |= 0xF0;
+#endif
+
+    P1M1 &= ~0x01; P1M2 |= 0x01; // RS pin
+    P3M1 &= ~0x08; P3M2 |= 0x08; // EN pin
+    RS = EN = 0; DATA = 0x00;
+
+    Timer2_DELAY(50, DELAY_UNIT_MS);
+
+#if LCD_MODE == LCD_8BIT
+    lcd_cmd(0x38);
+#elif LCD_MODE == LCD_4BIT
+    DATA = 0x30; lcd_pulse(); Timer2_DELAY(5, DELAY_UNIT_MS);
+    DATA = 0x30; lcd_pulse(); Timer2_DELAY(1, DELAY_UNIT_MS);
+    DATA = 0x20; lcd_pulse(); Timer2_DELAY(5, DELAY_UNIT_MS);
+    lcd_cmd(0x28);
+#endif
+
+    lcd_cmd(0x08);
+    lcd_cmd(0x01);
+    Timer2_DELAY(5, DELAY_UNIT_MS);
+    lcd_cmd(0x06);
+    lcd_cmd(0x0C);
+}
+
+void lcd_goto(uint8_t row, uint8_t col) { lcd_cmd((row ? 0xC0 : 0x80) + col); }
+void lcd_print(char *str) { while(*str) lcd_data(*str++); }
+void lcd_clear(void) { lcd_cmd(0x01); Timer2_DELAY(5, DELAY_UNIT_MS); }
+
+void Timer2_DELAY(unsigned int time, unsigned char unit)
+{
+    unsigned long loops = (unit == DELAY_UNIT_MS) ? time : (time * 1000UL);
+    unsigned long i;
+    for (i = 0; i < loops; i++)
+    {
+        T2MOD = 0x00;
+        RCMP2H = 0xC1;
+        RCMP2L = 0x80;
+        TH2 = 0xC1;
+        TL2 = 0x80;
+        TF2 = 0;
+        TR2 = 1;
+        while(!TF2);
+        TF2 = 0;
+        TR2 = 0;
+    }
+}
+
+void main(void)
+{
+    uint16_t adc_value = 0;
+    float voltage = 0;
+    char buffer[17] = {0};
+
+    lcd_init();
+    lcd_clear();
+    lcd_goto(0, 0); lcd_print("ADC Monitor");
+    lcd_goto(1, 0); lcd_print("Initializing...");
+    Timer2_DELAY(1000, DELAY_UNIT_MS);
+    lcd_clear();
+
+    P0M1 |= 0x08;
+    P0M2 &= ~0x08;
+    ADC_Init(ADC_CH6, ADC_ADCDIV2, ADC_ADCAQT5);
+
+    while (1)
+    {
+        adc_value = ADC_Read(ADC_CH6);
+        voltage = ADC_ReadVoltage(ADC_CH6, 5.0f);
+
+        sprintf(buffer, "ADC: %04u", adc_value);
+        lcd_goto(0, 0);
+        lcd_print(buffer);
+
+        sprintf(buffer, "V: %.2fV", voltage);
+        lcd_goto(1, 0);
+        lcd_print(buffer);
+
+        Timer2_DELAY(500, DELAY_UNIT_MS);
+    }
+}

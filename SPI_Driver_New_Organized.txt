@@ -1,0 +1,206 @@
+/*---------------------------------------------------------------------------------------------------------*/
+/*                                                                                                         */
+/* SPDX-License-Identifier: Apache-2.0                                                                     */
+/* Copyright(c) 2020 Nuvoton Technology Corp. All rights reserved.                                         */
+/*                                                                                                         */
+/*---------------------------------------------------------------------------------------------------------*/
+
+/*===================================================================================*/
+/*  Library: MS51 SPI Interface for W25Q16BV Flash Memory                           */
+/*  Purpose: Provides SPI communication functions for external flash memory access  */
+/*===================================================================================*/
+
+#include "MS51_16K.h"
+#include "spi.h" //can be anything ->spi_header_new_organized or spi_header_old
+
+/*===================================================================================*/
+/*                            SPI INITIALIZATION FUNCTIONS                          */
+/*===================================================================================*/
+
+/**
+ * Advanced SPI Initialization with Speed and Mode Configuration
+ * 
+ * This function initializes the SPI interface with specific speed and communication mode.
+ * It configures GPIO pins, sets up SPI registers, and returns the actual frequency achieved.
+ * 
+ * @param speed: SPI communication speed (SPI_2MBPS, SPI_1MBPS, or SPI_500KBPS)
+ * @param mode:  SPI communication mode (SPI_MODE0 to SPI_MODE3)
+ * @return:      Actual SPI frequency in Hz that was configured
+ */
+unsigned long SPI_Init(unsigned char speed, unsigned char mode)
+{
+    unsigned long hz = 0;
+    
+    /*--- System Clock Configuration ---*/
+    FsysSelect(FSYS_HIRC);              /* Select High-speed Internal RC oscillator as system clock */
+    
+    /*--- GPIO Pin Configuration for SPI Interface ---*/
+    P15_PUSHPULL_MODE;                  /* P1.5 = CS (Chip Select) pin - output, active low */
+    P13_PUSHPULL_MODE;                  /* P1.3 = RESET pin - output for external device reset */
+    P10_QUASI_MODE;                     /* P1.0 = SCLK (SPI Clock) pin - bidirectional */
+    P00_QUASI_MODE;                     /* P0.0 = MOSI (Master Out Slave In) pin - bidirectional */
+    P01_INPUT_MODE;                     /* P0.1 = MISO (Master In Slave Out) pin - input only */
+    
+    /*--- Initial Pin States ---*/
+    P15 = 1;                           /* Set CS pin high (inactive) - no device selected initially */
+    
+    /*--- SPI Control Register Configuration ---*/
+    set_SPSR_DISMODF;                  /* Disable mode fault detection - prevents accidental slave mode */
+    clr_SPCR_SSOE;                     /* Disable SS output enable - we control CS manually */
+    set_SPCR_MSTR;                     /* Set as SPI Master - we initiate all communications */
+    
+    /*--- SPI Communication Mode Configuration (Clock Polarity and Phase) ---*/
+    switch(mode)
+    {
+        case SPI_MODE0:                 /* Mode 0: Clock idle low, sample on rising edge */
+            clr_SPCR_CPOL;              /* Clock polarity = 0 (idle low) */
+            clr_SPCR_CPHA;              /* Clock phase = 0 (sample on first edge) */
+            break;
+            
+        case SPI_MODE1:                 /* Mode 1: Clock idle low, sample on falling edge */
+            clr_SPCR_CPOL;              /* Clock polarity = 0 (idle low) */
+            set_SPCR_CPHA;              /* Clock phase = 1 (sample on second edge) */
+            break;
+            
+        case SPI_MODE2:                 /* Mode 2: Clock idle high, sample on rising edge */
+            set_SPCR_CPOL;              /* Clock polarity = 1 (idle high) */
+            clr_SPCR_CPHA;              /* Clock phase = 0 (sample on first edge) */
+            break;
+            
+        case SPI_MODE3:                 /* Mode 3: Clock idle high, sample on falling edge */
+            set_SPCR_CPOL;              /* Clock polarity = 1 (idle high) */
+            set_SPCR_CPHA;              /* Clock phase = 1 (sample on second edge) */
+            break;
+    }
+    
+    /*--- SPI Speed Configuration (Clock Divider Settings) ---*/
+    if(speed == SPI_2MBPS)              /* Highest speed - 2 MHz for fast data transfer */
+    { 
+        SPICLK_FSYS_DIV4;               /* System clock divided by 4 */
+        hz = 2000000;                   /* Actual frequency: 2 MHz */
+    }
+    else if(speed == SPI_1MBPS)         /* Medium speed - 1 MHz for balanced performance */
+    { 
+        SPICLK_FSYS_DIV8;               /* System clock divided by 8 */
+        hz = 1000000;                   /* Actual frequency: 1 MHz */
+    }
+    else if(speed == SPI_500KBPS)       /* Lower speed - 500 KHz for maximum reliability */
+    { 
+        SPICLK_FSYS_DIV16;              /* System clock divided by 16 */
+        hz = 500000;                    /* Actual frequency: 500 KHz */
+    }
+    else                                /* Default fallback to 1 MHz if invalid speed specified */
+    { 
+        SPICLK_FSYS_DIV8;               /* System clock divided by 8 */
+        hz = 1000000;                   /* Actual frequency: 1 MHz */
+    }
+    
+    /*--- Enable SPI Interface ---*/
+    set_SPCR_SPIEN;                     /* Enable SPI interface - ready for communication */
+    
+    return hz;                          /* Return actual configured frequency */
+}
+
+/**
+ * SPI Module Power Control
+ * 
+ * Controls power to external SPI modules by toggling a power control pin.
+ * This can be used to reset external devices or manage power consumption.
+ */
+void SPI_Module_Power_ON(void)
+{
+    /*--- Power Control Pin Configuration ---*/
+    P17_PUSHPULL_MODE;                  /* Configure P1.7 as push-pull output for power control */
+    P17 ^= 1;                          /* Toggle power control pin (XOR with 1 flips the bit) */
+                                       /* This can turn power ON if it was OFF, or OFF if it was ON */
+}
+
+/*===================================================================================*/
+/*                         SPI COMMUNICATION FUNCTIONS                              */
+/*===================================================================================*/
+
+/**
+ * SPI Single Byte Write Function
+ * 
+ * Sends a single byte over the SPI interface and waits for transmission to complete.
+ * This is a blocking function - it will not return until the byte is fully transmitted.
+ * 
+ * @param u8SpiWB: The byte value to be transmitted over SPI
+ */
+void Spi_Write_Byte(unsigned char u8SpiWB)
+{
+    /*--- Start SPI Transmission ---*/
+    SPDR = u8SpiWB;                     /* Load data into SPI Data Register to start transmission */
+    
+    /*--- Wait for Transmission Complete ---*/
+    while(!(SPSR & 0x80));              /* Wait until SPIF flag (bit 7) is set in SPI Status Register */
+                                       /* SPIF = 1 indicates transmission is complete */
+    
+    /*--- Clear Transmission Complete Flag ---*/
+    clr_SPSR_SPIF;                     /* Clear SPIF flag by software to prepare for next transmission */
+}
+
+/**
+ * SPI Single Byte Read Function
+ * 
+ * Performs SPI read operation by sending a byte (command or dummy) and receiving response.
+ * In SPI, reading always requires sending something - either a command or dummy data.
+ * This is a blocking function that waits for the full read cycle to complete.
+ * 
+ * @param u8Data: Byte to send during read operation (command byte or dummy 0x00)
+ * @return:       Byte received from SPI slave device
+ */
+unsigned char Spi_Read_Byte(unsigned char u8Data)
+{
+    /*--- Start SPI Read Transaction ---*/
+    SPDR = u8Data;                      /* Send command/dummy byte to initiate read cycle */
+                                       /* Sending data triggers the clock which enables reading */
+    
+    /*--- Wait for Transaction Complete ---*/
+    while(!(SPSR & SET_BIT7));         /* Wait for SPIF flag (bit 7) = 1 in SPI Status Register */
+                                       /* This indicates both send and receive operations are done */
+    
+    /*--- Clear Transaction Complete Flag ---*/
+    clr_SPSR_SPIF;                     /* Clear SPIF flag to prepare for next SPI operation */
+    
+    /*--- Return Received Data ---*/
+    return SPDR;                        /* Read and return the byte received from SPI slave */
+}
+
+/*===================================================================================*/
+/*                               DEBUG LED CONTROL FUNCTIONS                         */
+/*===================================================================================*/
+
+/**
+ * Debug LED Control Function
+ * 
+ * This function controls the debug LED connected to port pin P0.4.  
+ * The LED can be turned ON, turned OFF, or toggled depending on the requested action.  
+ * Useful for indicating system states, errors, or activity during debugging.
+ * 
+ * @param action: LED control action of type led_action_t
+ *                - LED_OFF:    Turn LED off
+ *                - LED_ON:     Turn LED on
+ *                - LED_TOGGLE: Toggle LED state
+ */
+void debug_led(led_action_t action) 
+{
+    /*--- GPIO Pin Configuration ---*/
+    P04_PUSHPULL_MODE;                 /* Configure P0.4 as push-pull output for driving LED */
+    
+    /*--- LED Control Logic ---*/
+    switch(action) 
+    {
+        case LED_OFF:
+            P04 = 0;                   /* Drive pin low (LED off if active-high, on if active-low) */
+            break;
+            
+        case LED_ON:
+            P04 = 1;                   /* Drive pin high (LED on if active-high, off if active-low) */
+            break;
+            
+        case LED_TOGGLE:
+            P04 ^= 1;                  /* Toggle current state of the LED pin */
+            break;
+    }
+}

@@ -1,0 +1,64 @@
+#include "adc_custom_h.h"
+
+void ADC_Init(uint8_t channel, uint8_t div, uint8_t aqt)
+{
+    SFRS = 0;
+    ADCCON1 &= 0xCF;
+    ADCCON1 |= (div & 0x07) << 4;
+
+    switch (channel)
+    {
+        case ADC_CH0: ENABLE_ADC_AIN0; break;
+        case ADC_CH1: ENABLE_ADC_AIN1; break;
+        case ADC_CH2: ENABLE_ADC_AIN2; break;
+        case ADC_CH3: ENABLE_ADC_AIN3; break;
+        case ADC_CH4: ENABLE_ADC_AIN4; break;
+        case ADC_CH5: ENABLE_ADC_AIN5; break;
+        case ADC_CH6: ENABLE_ADC_AIN6; break;
+        case ADC_CH7: ENABLE_ADC_AIN7; break;
+        case ADC_CH9: ENABLE_ADC_AIN9; break;
+        case ADC_CH10: ENABLE_ADC_AIN10; break;
+        case ADC_CH11: ENABLE_ADC_AIN11; break;
+        case ADC_CH12: ENABLE_ADC_AIN12; break;
+        case ADC_CH13: ENABLE_ADC_AIN13; break;
+        case ADC_CH14: ENABLE_ADC_AIN14; break;
+        case ADC_CH15: ENABLE_ADC_AIN15; break;
+        default: break;
+    }
+
+    if (channel <= ADC_CH7 || channel == ADC_BANDGAP) {
+        ADCCON2 &= 0xF1;
+        ADCCON2 |= (aqt & 0x07) << 1;
+    } else {
+        SFRS = 2;
+        ADCCON3 &= 0xF1;
+        ADCCON3 |= (aqt & 0x07) << 1;
+        SFRS = 0;
+    }
+}
+
+uint16_t ADC_Read(uint8_t channel)
+{
+    ADCCON0 &= 0xF0;     // Clear lower 4 bits (channel selection)
+    ADCCON0 |= channel;  // Set new channel
+
+    clr_ADCCON0_ADCF;
+    set_ADCCON0_ADCS;
+
+    while (!(ADCCON0 & SET_BIT7));
+
+    return ((ADCRH << 4) | (ADCRL & 0x0F));
+}
+
+
+float ADC_ReadVoltage(uint8_t channel, float vref)
+{
+	  uint16_t raw = 0;
+    ADCCON0 &= 0xF0;           // Clear channel bits
+    ADCCON0 |= channel;        // Select ADC channel
+    clr_ADCCON0_ADCF;
+    set_ADCCON0_ADCS;
+    while (!(ADCCON0 & SET_BIT7));
+    raw = (ADCRH << 4) | (ADCRL & 0x0F);
+    return ((float)raw * vref) / 4095.0f;
+}

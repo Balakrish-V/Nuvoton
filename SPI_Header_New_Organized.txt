@@ -1,0 +1,68 @@
+#ifndef SPI_H_H_
+#define SPI_H_H_
+
+
+#include "MS51_16K.h"
+#include "spi.h"
+
+
+/*===================================================================================*/
+/*                               SPI CONFIGURATION                                   */
+/*===================================================================================*/
+
+/* SPI Speed Configuration Values */
+#define SPI_2MBPS       2       /* SPI communication at 2 Megabits per second - fastest speed */
+#define SPI_1MBPS       1       /* SPI communication at 1 Megabit per second - medium speed */
+#define SPI_500KBPS     5       /* SPI communication at 500 Kilobits per second - slower but more reliable */
+
+/* SPI Mode Configuration Values (Clock Polarity and Phase) */
+#define SPI_MODE0       0       /* Clock idle low, data sampled on rising edge */
+#define SPI_MODE1       1       /* Clock idle low, data sampled on falling edge */
+#define SPI_MODE2       2       /* Clock idle high, data sampled on rising edge */
+#define SPI_MODE3       3       /* Clock idle high, data sampled on falling edge */
+
+/* SPI Hardware Pin Definitions */
+#define SS_PIN          P15     /* Slave Select pin - P15 used for chip selection */
+
+/*===================================================================================*/
+/*                              TIMING CONFIGURATION                                 */
+/*===================================================================================*/
+
+/* Timer Delay Unit Definitions */
+#define DELAY_UNIT_MS   1       /* Delay unit in milliseconds for short delays */
+#define DELAY_UNIT_SEC  2       /* Delay unit in seconds for longer delays     */
+
+/* Default Timing Configuration */
+#define DELAY_TIME      1               /* Default delay duration (1 unit) -> How many times?*/
+#define DELAY_UNIT      DELAY_UNIT_SEC  /* Default unit: seconds (change to DELAY_UNIT_MS for milliseconds) */
+
+/*===================================================================================*/
+/*                                ENUMERATIONS                                       */
+/*===================================================================================*/
+
+/* LED Control Actions - Different operations that can be performed on debug LED */
+typedef enum {
+    LED_OFF = 0,        /* Turn LED completely off */
+    LED_ON,             /* Turn LED completely on */
+    LED_TOGGLE          /* Switch LED state (on->off or off->on) */
+} led_action_t;
+
+/*===================================================================================*/
+/*                               FUNCTION PROTOTYPES                                 */
+/*===================================================================================*/
+
+/*--- SPI Initialization and Configuration Functions ---*/
+void SPI_Module_Power_ON(void);                                  /* Power up the SPI module hardware */
+unsigned long SPI_Init(unsigned char speed, unsigned char mode); /* Advanced SPI init with speed and mode selection */
+
+/*--- SPI Communication Functions ---*/
+extern void Spi_Write_Byte(unsigned char u8SpiWB);             /* Send single byte over SPI interface */
+extern unsigned char Spi_Read_Byte(unsigned char u8SpiWB);     /* Read single byte from SPI (send dummy byte if needed) */
+
+/*--- Timing and Delay Function ---*/                          /* Simple blocking delay function */
+void Timer2_DELAY(unsigned int time, unsigned char unit);      /* Precise timer-based delay with configurable units */
+
+/*--- Debug and Utility Functions ---*/
+void debug_led(led_action_t action);                           /* Control debug LED for status indication and testing */
+
+#endif /* SPI_H_H_ */
