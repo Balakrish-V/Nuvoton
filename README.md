@@ -25,3 +25,53 @@ We have used the following Nuvoton Microcontrollers:-
 2. MS51EC0AE (32Kb flash)
 
 The BSP is same for both the microcontrollers. But the memory mapping will vary obviously. Also there is pinout differences as the former is 20Pin IC and the latter is 28Pin IC. Check out for it. Also we have made some changes in main file and also in the separate driver file. So simply understanding the main alone will not provide sufficient information about the working of the code.
+
+
+Modbus Communication Setup – Project Overview
+1. Basic Modbus Concept
+
+Modbus Master / Client
+→ The device that initiates communication and requests data.
+
+Modbus Slave / Server
+→ The device that responds to the Master’s requests.
+→ It serves the requested data or performs the requested action.
+
+🔹 In short:
+Master/Client = Requests
+Slave/Server = Serves (Responds)
+
+2. MCU Role Definitions
+
+The MCU that connects to or receives data is the Modbus Client (Master).
+
+The MCU that listens and responds is the Modbus Server (Slave).
+
+3. Project Files Overview
+A. Modbus_TX_RX_old
+
+In this setup:
+
+MS51FB9AE (16 KB Flash) → acts as the Modbus Master / Client / Receiver
+
+MS51EC0AE (32 KB Flash) → acts as the Modbus Slave / Server / Transmitter
+
+This project demonstrates the communication where:
+
+The 16 KB device requests and receives data.
+
+The 32 KB device listens and sends the requested data.
+
+Note:
+All the dependent libraries for this code are configured through Keil Path Settings.
+The project uses the header files and drivers provided in the Board Support Package (BSP).
+
+B. Modbus_With_Library
+
+This project performs the reverse configuration of the previous setup.
+
+MS51EC0AE (32 KB Flash) → acts as the Modbus Master / Client / Receiver
+
+MS51FB9AE (16 KB Flash) → acts as the Modbus Slave / Server / Transmitter
+
+This allows testing in both directions — ensuring both devices can operate as either Master or Slave.
