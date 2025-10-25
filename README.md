@@ -48,7 +48,7 @@ The MCU that connects to or receives data is the Modbus Client (Master).
 The MCU that listens and responds is the Modbus Server (Slave).
 
 3. Project Files Overview
-A. Modbus_TX_RX_old
+A. Modbus_TX_RX
 
 In this setup:
 
