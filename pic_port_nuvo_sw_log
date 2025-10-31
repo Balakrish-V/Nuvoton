@@ -1,0 +1,1654 @@
+#include "MS51_32K.h"
+#include <math.h>
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							i/o init routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+#define 	voltup  	  P14//triac 1-output mode
+#define 	voltdn  	  P13//triac2 -output mode
+#define 	cutoff  	  P11//internal relay output mode
+#define   extcutoff   P12//external relay output mode
+#define   CARRY CY
+
+#define		  buzzer	        P35
+/*#define     ipredled        P15//RA1
+#define     ipgreenled      P15//RC3
+#define     rgbredled       P15//RC6
+#define     rgbblueled      P15//RA4*/
+
+#define 	chip  	P10
+#define 	enab 		P33
+#define   ddata    P16
+
+bit BIT_TMP;  
+
+sbit dclock=P2^1;
+//#define    ENABLE1_ADC_CH10       P22_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0A;AINDIDS1=0;AINDIDS1|=0x04;ADCCON1|=0x31;//input section
+//#define    ENABLE1_ADC_CH11       P23_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0B;AINDIDS1=0;AINDIDS1|=0x08;ADCCON1|=0x31;//output section
+//#define    ENABLE1_ADC_CH12       P24_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0C;AINDIDS1=0;AINDIDS1|=0x10;ADCCON1|=0x31;//CT section
+//#define    ENABLE1_ADC_CH15       P25_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0F;AINDIDS1=0;AINDIDS1|=0x80;ADCCON1|=0x31;//switch
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							lookup table routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											  constant  declaration
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+#define dp '.'
+#define hi '-'
+#define ha '/'
+#define ac ':'
+#define nu ' ' 
+#define ast '*'
+#define ca 'A'
+#define cb 'B'
+#define cc 'C'
+#define cd 'D'
+#define ce 'E'
+#define cf 'F'
+#define cg 'G'
+#define ch 'H'
+#define ci 'I'
+#define cj 'J'
+#define ck 'K'
+#define cl 'L'
+#define cm 'M'
+#define cn 'N' 
+#define co 'O' 
+#define cp 'P' 
+#define cq 'Q'
+#define cr 'R'
+#define cs 'S'
+#define ct 'T'
+#define cu 'U'
+#define cv 'V' 
+#define cw 'W'
+#define cx 'X' 
+#define cy 'Y'
+#define cz 'Z' 
+#define da '0'
+#define db '1'
+#define dc '2'
+#define dd '3'
+#define de '5'
+#define df '7'
+#define dp '.'
+
+	#define sa 'a'
+	#define sb 'b'
+	#define sc 'c'
+	#define sd 'd'
+	#define se 'e'
+	#define sf 'f'
+	#define sg 'g'
+	#define sh 'h'
+	#define si 'i'
+	#define sj 'j'
+	#define sk 'k'
+	#define sl 'l'
+	#define sm 'm'
+	#define sn 'n' 
+	#define so 'o'
+	#define sp 'p' 
+	#define sq 'q'
+	#define sr 'r'
+	#define ss 's'
+	#define st 't'
+	#define su 'u'
+	#define sv 'v' 
+	#define sw 'w'
+	#define sx 'x' 
+	#define sy 'y'
+	#define sz 'z'
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							lcd initialisation values routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+xdata const char init2[]={0x38,0xa0,0x38,0x0a,0x08,0x0a,0x01,0x0a,0x06,0x0a,0x0f,0x0a,0x80,0x0a,0x01,0x0a};
+//const char init2[]={0x38,0x0a,0x38,0x01,0x08,0x01,0x01,0x05,0x06,0x01,0x0f,0x01,0x80,0x01,0x01,0x00};
+
+xdata const char fline1[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};
+xdata const char sen[]=		{cs,se,sn,ss,si,st,sy,nu,':',nu,nu,nu,nu,nu,cv,nu};
+xdata const char svt[]=		{cs,se,st,nu,cv,so,sl,st,':',nu,nu,nu,nu,nu,cv,nu};
+xdata const char ohc[]=		{nu,co,'/',cp,nu,ch,cv,nu,':',nu,nu,nu,nu,nu,cv,nu};
+xdata const char ovl[]=		{co,sv,se,sr,sl,so,sa,sd,':',nu,nu,nu,nu,nu,ca,nu};
+xdata const char ctfs[]=		{cc,ct,nu,cf,sa,sc,st,sr,':',nu,nu,nu,nu,nu,nu,nu};
+
+//const char olt[]=		{co,cv,cl,nu,ct,si,sm,se,':',nu,nu,nu,nu,nu,cs,nu};
+xdata const char vcut[]=		{cv,sc,su,st,nu,ct,si,sm,se,':',nu,nu,nu,nu,cs,nu};
+xdata const char auton[]=		{co,sn,nu,cd,se,sl,sa,sy,':',nu,nu,nu,nu,nu,cs,nu};
+
+
+xdata const char mod1[]=		{nu,nu,nu,cm,so,sd,se,':',cm,sa,sn,su,sa,sl,nu,nu}; //-2manual
+xdata const char mod []=		{nu,nu,nu,cm,so,sd,se,':',ca,su,st,so,nu,nu,nu,nu}; // 1-auto
+xdata const char rmod[]=      {cr,se,sl,sa,sy,':',nu,ci,sn,st,se,sr,sn,sa,sl,nu}; //1-internal
+//const char rmod1[]=     {cr,se,sl,sa,sy,':',nu,ce,sx,st,se,sr,sn,sa,sl,nu}; //2-external
+
+xdata const char calibx[]=		{cp,cr,ce,cs,nu,cs,ct,co,cp,nu,st,so,nu,cc,sa,sl,nu};
+
+xdata const char iocal[]=		{nu,co,'/',cp,nu,cc,sa,cl,ac,nu,nu,nu,nu,nu,cv,nu};
+
+
+
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    variable declaration routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+volatile unsigned char xdata page_buffer[128];
+unsigned char rdata;
+xdata char i=0,k=0,zerodetect=0,lmenu=0,etype=0,errortime=0,eaddr=0,erase=0,reportzero=0;
+xdata char smenu=0,h=0,amanpress=0,address=0,sensi=0;
+xdata char loop=0,lcome=0,reg=0,reg7=0,r3=0,ibm=0,temp=0,dbuf[7],digit1[7],icome=0;
+xdata unsigned char calpress=0,inccome=0,errortime1=0,msec=0,sec=0,startpress=0,stoppress=0,menupress=0;
+xdata unsigned char count=0,r3x=0,count1=0,highbyte=0,lowbyte=0,channel=0,initialenter=0,x=0;
+
+
+xdata unsigned int ovltimes=0,ivolt=0,ovolt=0,buffer=0,doad=0,current=0,evalue=0,countx=0,m=0;
+xdata unsigned int rlycutter=0,buffer1=0,bufferx=0,result3=0,result2=0,swactive=0,readrom=0,v_cal=0,cuttime1=0,ontime1=0,cutoffcount=0,cutoffcount1=0,fres=0,frequency=0,result1=0;
+xdata unsigned long resultx=0,fresx=0,resulty=0,resulta=0,result=0,original=0;
+xdata unsigned int settings[32],intref=0,ovoltbufx=0,intref1=0,fscan=0,qsec=0;
+xdata unsigned int freq1=0,loop2=0,income2=0,ledcount=0;
+xdata signed int fcompensate=0;
+xdata double resultx1=0,resultxy2=0;
+
+xdata char iplowled=0,iphighled=0,oplowled=0,ophighled=0,cutoffled=0,outputon=0,ovlled=0,resetted=0,voltprob=0;
+xdata unsigned char writ=0,spress=0,startkey=0,automansw=0,ovlreset=0,stopkey=0,menukey=0,testkey=0,mpress=0,automan=0,manualreset=0;
+xdata char swrelease=0,qmax=0,calib=0,nokey=0;
+void set_clock_source(void);
+void set_clock_division_factor(unsigned char value);
+void init(void);
+void portinit(void);
+void enabler(char t4)	;
+void delay(char gg);
+void timer_init(void);
+void lcdinit(void);
+void splitl(void);
+void valuewrite(void);
+void adrcal(void);
+void valuewritex(void);
+void adcal(void);
+void adc_init(void);
+void adcal1(void);
+void atodconv(void);
+void involtscan(void);
+void zccheck(void);
+void keyatod(void);
+void mdiv(void);
+void voltcal(void);
+void docal(void);
+void display2(void);
+void sline(void);
+void fline(void);
+void trmsadc(void);
+void mult(void);
+void incdecmode(void);
+void outvoltscan(void);
+void divcommon(void);
+void errorframe(void);
+void outloadscan(void);
+void lfreq(void);
+void editmode(void);
+void dataread(void);
+void FlashWrite(void);
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr);
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData);
+void main()
+{
+	init();
+	delay(100);
+	lcdinit();
+cutoffled=1;
+dataread(); 
+	reportzero=1;
+	for(ovltimes=0;ovltimes<10;ovltimes++)
+  keyatod();
+ovltimes=0;
+reportzero=0;
+fscan=759;
+frequency=500;
+channel=0x0c;//ct
+atodconv();
+intref=result;
+automansw=0;
+//errortime=99;*/
+timer_init();
+	while(1)
+	{
+lmenu=0;
+lfreq();
+while(!automansw)
+{ 
+ovoltbufx=0;
+for(i=0;i<20;i++)//
+{
+outvoltscan();			//output voltage scanning routine
+ovoltbufx=ovolt+ovoltbufx;
+}
+ovolt=ovoltbufx/20;
+
+// output relay is turned on then output voltage need to be displayed zero. updated on 19/10/24 only for golden.
+//if(outputon==0)
+  //  ovolt=0;
+
+involtscan();
+outloadscan();
+keyatod();
+lfreq();
+
+if(menukey==1)
+{
+    lmenu++;
+    if(lmenu>4)
+       lmenu=0;
+}   
+if((ovlled==1||iphighled==1||iplowled==1||ophighled==1||oplowled==1)&&settings[16]==1)
+              buzzer=1;
+if((ovlled==0&&iphighled==0&&iplowled==0&&ophighled==0&&oplowled==0)||settings[16]==2)
+              buzzer=0;
+
+
+valuewritex();
+if(count<5)
+  count++;
+}
+if(automansw)
+{
+    writ=0;
+    smenu=1;
+    display2();
+}
+
+while(automansw)			// to view the i/p or o/p volt
+{
+    buzzer=0;
+    voltup=0;
+    voltdn=0;
+    cutoffcount=0;
+    outputon=0;
+	   cutoff=0;
+    extcutoff=0;
+    cutoffled=1;
+    editmode();
+
+}
+if(automansw==0)
+{
+    chip=0;
+    enabler(0x01);
+     delay(2);
+    valuewritex();
+}
+	}
+}
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						   interrupt service routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void Timer_ISR (void) interrupt 16
+{
+ T3CON&=~(1<<4);
+if(ovlled==1)
+{
+	rlycutter++;
+	if(rlycutter>910)
+	{
+		ovltimes++;
+		rlycutter=0;
+	}
+}	
+if(iphighled==1||iplowled==1||ophighled==1||oplowled==1)
+{
+	rlycutter++;
+	if(rlycutter>980)
+	{
+		cutoffcount1++;
+		rlycutter=0;
+	}
+}
+if(automan==0)
+{
+swactive=0;
+swrelease=0;
+}
+if(automan==1&&swrelease==0)
+{
+swactive++;
+if((swactive>1000)||((swactive>10)&&(initialenter==0)&&(settings[1]==0)))
+{
+
+swrelease=1;
+swactive=0;
+automansw=!automansw;
+initialenter=1;
+}
+}
+qsec++;
+if(qsec>1000)//500
+     qsec=0;
+    
+    if(iphighled==1)
+    {
+			 r3x&=~(1<<6);
+			 r3x|=(1<<7);
+    }
+if(iplowled==1)
+{
+	  r3x&=~(1<<6);
+    if(qsec<500)
+			r3x&=~(1<<7);
+    if(qsec>500&&ivolt>60)
+			r3x|=(1<<7);
+}   
+if(iphighled==0&&iplowled==0)
+{
+   r3x&=~(1<<7);
+	   r3x|=(1<<6);
+}
+if(ophighled==1)
+	  r3x|=(1<<2);
+  
+if(oplowled==1)
+{
+    if(qsec<500)
+			 r3x&=~(1<<2);
+    if(qsec>500)
+			r3x|=(1<<2);
+}
+if(ophighled==0&&oplowled==0)
+	    r3x&=~(1<<2);
+
+if(settings[15]==1&&ovlled==1&&cutoffled==1&&automan==0)
+{
+msec++;
+if(msec>250)
+{
+msec=0;
+sec++;
+if(sec>120)//180
+{
+sec=0;
+ovlled=0;
+cutoffled=0;
+ovlreset=1;
+}
+}
+}
+ledcount++;
+if(ledcount>500)
+{
+	ledcount=0;
+	count1=0;
+}
+while(count1<8)
+{
+dclock=0;
+r3x=r3x<<1;
+if(CARRY)
+{
+ddata=1;
+dclock=1;
+}
+if(!CARRY)
+{
+ddata=0;
+dclock=1;
+}
+count1++;
+}
+dclock=0;
+ddata=0;
+}
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											input voltage scan routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void atodconv(void)
+{
+result=0;
+for(doad=0;doad<350;doad++)
+{
+ADCCON0=channel;
+	if(automansw==0)
+for(h=0;h<35;h++);
+	if(automansw==1)
+for(h=0;h<50;h++);
+adcal();
+result=result1+result;
+}
+result=result/350;
+}
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											input voltage scan routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void involtscan(void)
+{
+channel=0x0a;
+trmsadc();
+ivolt=resultx;
+if(automansw==0)
+{
+v_cal=settings[14];
+voltcal();
+ivolt=result;
+}
+}
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void adc_init(void)
+{
+	SFRS=0;
+	ADCCON0&=0x30;
+	AINDIDS1=0x9c;
+  ADCCON1|=0x31;
+	
+}
+void adcal(void)
+{
+	  clr_ADCCON0_ADCF;
+    set_ADCCON0_ADCS;                  
+    while(ADCF == 0);
+    result1=(ADCRH<<4)+(ADCRL&0x0F);
+		result1=result1>>2;
+}
+void adcal1(void)
+{
+ADCCON0=channel;
+adcal();
+intref1=intref;
+	
+if(channel!=0x0c)
+   intref1=512;
+if(result1>=intref1)
+result2=result1-intref1;
+if(result1<intref1)
+result2=intref1-result1;    
+}
+void trmsadc(void)
+{
+resultx=0;
+zccheck();    
+for(doad=0;doad<fscan;doad++)//40100us 
+{
+ADCCON0=channel;
+for(h=0;h<35;h++);//20
+adcal1();
+if(channel==0x0c)
+{
+   if(result2<3)
+      result2=0;
+	
+}
+if(channel!=0x0c)
+{
+if(result2<7)
+   result2=0;
+}   
+result3=result2*result2;
+resultx=result3+resultx;
+}
+resultx=resultx/50;
+resultx1=resultx;
+divcommon();
+resultxy2=0;
+     while(resultx1!= resultxy2)
+     {
+     resultxy2=resultx1;
+     resultx1=resultx/resultxy2;
+     resultx1=resultx1+resultxy2;
+             divcommon();
+    }
+     resultx=resultx1; 
+}
+void set_clock_source(void)
+{
+	set_CKEN_HIRCEN;         
+  while((CKSWT & SET_BIT5) == 0);
+}
+
+void set_clock_division_factor(unsigned char value)
+{
+  CKDIV = value;
+}
+void timer_init(void)
+{
+	T3CON=0x04;
+	RL3=0x18;
+	RH3=0xFC;
+	EIE1=0x02;
+	IE |=0x80;
+	T3CON|=(1<<3);
+}
+void portinit(void)
+{
+	dclock=0;
+	ddata=0;
+	
+	   //lcd pins
+	SFRS=0;
+	P0M1&=0x00;
+	P0M2|=0xFF;
+	P0=0x00;
+  //rs,in&out rly,triac ,led driver.
+	SFRS=0;
+	P1M1&=0x00;
+	P1M2|=0x5F;
+	P1=0x00;
+	 //mclr,led driver, in& out selection,ct& switch
+	SFRS=2;
+	P2M1|=0x3c;
+	P2M1&=~(1<<1);
+	P2M2|=0x02;
+	P2=0x00;
+
+	//enable& buzzer
+	SFRS=0;
+	P3M1&=0x00;
+	P3M2|=0x28;
+	P3=0x00;
+}
+void init(void)
+{
+ set_clock_source();
+ portinit();
+ //timer_init();
+ adc_init();
+}
+void enabler1(char ladr,char ldata)
+{
+    chip=0;
+    enabler(ladr);
+    delay(2);
+    chip=1;
+    enabler(ldata);
+    delay(2);
+}
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void valuewritex(void)
+{
+buffer=ovolt;
+splitl();
+address=0x80;
+valuewrite();
+
+buffer=current;
+splitl();
+address=0x85;
+valuewrite();
+
+buffer=ivolt;
+splitl();
+address=0xc0;
+valuewrite();
+buffer=frequency;
+qmax=1;
+splitl();
+qmax=0;
+address=0x8a;
+valuewrite();
+chip=0;
+enabler(0x0c);
+
+
+enabler1(0x83,'V');
+enabler1(0x88,'A');
+enabler1(0x8e,'H');
+enabler1(0x8F,'z');
+enabler1(0xc3,'V');//C0
+enabler1(0xc4,'i');//C1
+
+
+
+    if(settings[18]>0)
+    {
+    enabler1(0xc7,'E');
+    errortime=settings[18];
+    if(errortime>lmenu)
+    errortime=errortime-lmenu;
+    
+    
+    if(errortime<12)
+    {
+    adrcal();
+    enabler(errortime1+0x30);
+    enabler('-');
+    delay(1);
+   
+    etype=settings[eaddr];
+    evalue=settings[eaddr+1];
+    errortime=settings[18];
+    
+    if(etype==1||etype==2||etype==5)    
+    enabler('O');
+    if(etype==3||etype==4)
+    enabler('I');    
+    delay(1);
+    if(etype==1||etype==3||etype==5)
+    enabler('L');
+    if(etype==2||etype==4)
+    enabler('H');    
+    delay(1);
+    if(etype<5)
+    enabler('V');
+    if(etype==5)
+    enabler('T');    
+    delay(1);
+    
+buffer=evalue;
+splitl();
+address=0xcd;
+valuewrite();
+    }
+    } 
+    chip=0;
+   enabler(0x0c); 
+}
+
+void adrcal(void)
+{
+     errortime1=errortime;
+    if(errortime>5)
+     errortime1=errortime-5;
+    eaddr=17+(errortime1*2);
+}
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void valuewrite(void)
+{
+   chip=0;
+   enabler(address);
+   delay(3);
+    chip=1;
+for(ibm=1;ibm<5;ibm++)
+{
+temp=dbuf[ibm];
+enabler(temp);
+delay(0x01);
+}
+}
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void splitl(void)
+{
+    bufferx=buffer;
+digit1[1]=(bufferx/100);
+dbuf[1]=digit1[1]+0x30;
+bufferx=bufferx%100;
+digit1[2]=(bufferx/10);
+dbuf[2]=digit1[2]+0x30;
+digit1[3]=(bufferx%10);
+dbuf[3]=digit1[3]+0x30;
+dbuf[4]=' ';
+
+
+if(qmax==1)
+{
+dbuf[4]=(bufferx%10)+0x30;
+dbuf[3]='.';
+}
+}
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void lcdinit(void)	
+{
+	  reg=0;
+    chip=0;
+	while(reg<15)
+	{
+	reg7=init2[reg];
+	enabler(reg7);
+	reg++;
+	if(reg==14)
+	return;
+	reg7=init2[reg];
+	delay(reg7);
+	reg++;
+	}
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								enable routine	
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void enabler(char t4)		
+{
+//PORTB=t4;
+P0=t4;
+enab=0;
+for(r3=0;r3<100;r3++);
+enab=1;
+}
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											output load current scan routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void outloadscan(void)
+{
+channel=0x0c;
+trmsadc();
+result=resultx;
+original=settings[7];
+	if(original>0)
+       mdiv();
+	if(original<=0)
+		result=0;
+current=result/10;
+if(current<(settings[8]-1)&&(cutoff==1||extcutoff==1))
+{
+ovlled=0;
+ovltimes=0;
+}
+if(current>settings[8])
+{
+//ovltimes++;
+ovlled=1;
+if(ovltimes>(settings[9]))
+{
+ovltimes=0;
+ovlled=1;
+outputon=0;
+cutoffled=1;
+etype=5;
+evalue=current;
+errorframe();
+cutoff=0;
+ extcutoff=0;
+}
+}
+r3x&=~(1<<3);
+if(ovlled==1)
+	r3x|=(1<<3);
+}
+void errorframe(void)
+{
+   if(cutoff==1||extcutoff==1)
+    {
+errortime++;
+if(errortime>10)//
+   errortime=errortime-5;
+settings[18]=errortime;
+adrcal();
+settings[eaddr]=etype;
+settings[eaddr+1]=evalue;
+ FlashWrite();
+  IE|=(1<<7);
+    }
+}
+void divcommon(void)
+{
+    resultx1=resultx1/2;
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											output voltage scan routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void outvoltscan(void)
+{
+
+channel=0x0b;
+trmsadc();
+
+ovolt=resultx;
+
+
+if(automansw==0)
+{
+    
+v_cal=settings[13];
+voltcal();
+ovolt=result;
+
+if(stopkey==1)
+{
+delay(1);
+if(stopkey==1)
+{	
+cutoffled=1;
+outputon=0;
+cutoff=0;
+extcutoff=0;
+ovlled=0;
+manualreset=1;
+resetted=1;
+iphighled=0;
+iplowled=0;
+ophighled=0;
+oplowled=0;
+ovlled=0;
+voltprob=0;
+cutoffcount=0;
+cutoffcount1=0;
+}
+}
+if(outputon==1&&startkey==1&&voltprob==0)
+{
+    if(settings[17]==1)
+    {
+    cutoff=1;
+extcutoff=0;
+    }
+if(settings[17]==2)
+{
+    extcutoff=1;
+    cutoff=0;
+}
+cutoffled=0;
+manualreset=0;
+}
+sensi=settings[2];
+if(ovolt>(settings[1]-(sensi+2))&&ovolt<(settings[1]+sensi))
+{
+voltup=0;
+voltdn=0;
+}
+if(ovolt>(settings[1]+sensi))
+{
+voltup=0;
+voltdn=1;
+}
+if(ovolt<(settings[1]-sensi))
+{
+voltdn=0;
+voltup=1;
+}
+if(settings[15]==1||voltprob==0)
+{
+if(ovolt<=(settings[3]-5))
+ophighled=0;
+if(ovolt>=(settings[4]+5))
+oplowled=0;
+
+if( (ophighled==0&&oplowled==0) && (ivolt<=(settings[5]-5)&&ivolt>=(settings[6]+5))&&ovlled==0)
+{
+cutoffcount++;
+cutoffcount1=0;
+iphighled=0;
+iplowled=0;
+resetted=0;
+ontime1=settings[11];
+//ontime1=ontime1*12;
+	ontime1=ontime1*20;
+
+
+if(settings[15]==2)//manual start
+    ontime1=12;
+if(cutoffcount>=ontime1||ovlreset==1)
+{
+ovlreset=0;
+cutoffcount=0;
+outputon=1;
+if(settings[15]==1&&manualreset==0)
+{
+    resetted=0;
+voltprob=0;
+if(settings[17]==1)
+{
+cutoff=1;
+extcutoff=0;
+}
+if(settings[17]==2)
+{
+    extcutoff=1;
+    cutoff=0;
+}
+cutoffled=0;
+}
+}
+}
+}
+if(ivolt>settings[5])
+{
+    etype=4;
+iphighled=1;
+iplowled=0;
+}
+if(ivolt<settings[6])
+{
+    etype=3;
+iphighled=0;
+iplowled=1;
+}
+if(ovolt>settings[3])
+{
+    etype=2;
+ophighled=1;
+oplowled=0;
+}
+if(ovolt<settings[4])
+{
+    etype=1;
+ophighled=0;
+oplowled=1;
+}
+
+if(iphighled==1||iplowled==1||ophighled==1||oplowled==1)
+{
+//cutoffcount1++;
+cutoffcount=0;
+
+if(cutoffcount1>=(settings[10]))
+{
+voltprob=1;
+cutoffcount1=0;
+outputon=0;
+cutoffled=1;
+
+
+if(etype<3)
+evalue=ovolt;
+if(etype>2&&etype<5)
+    evalue=ivolt;
+errorframe();
+cutoff=0;
+    extcutoff=0;
+
+}
+}
+}
+}
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											split routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void delay(char gg)
+{
+	  TMOD|=0x01;
+	  TH0=0xfe;
+		TL0=0xf5;//200us
+	  TR0=1;
+    for(k=0;k<gg;k++)
+    {
+			TH0=0xfe;
+			TL0=0xf5;//200us
+			TF0=0;
+			while(TF0==0);
+    }
+		TR0=0;
+}
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								incre key routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void incdecmode(void)
+{
+keyatod();
+
+if(startkey==0)
+    inccome=0;
+if(startkey==1)
+{
+    if(inccome<100)
+    inccome++;
+   
+buffer=buffer+(1+(inccome/4));
+
+if(buffer>999)
+    buffer=0;
+writ=1;
+}
+
+//if(stopkey==0)
+  //  deccome=0;
+
+
+if(stopkey==1)
+{
+//if(deccome<100)
+  //  deccome++;
+
+    //if(buffer>11)
+      //  buffer=buffer-(1+(deccome/4));
+    //if(buffer<12&&buffer>0)
+        if(buffer>0)
+        buffer--;
+    if(buffer==0)
+        buffer=999;
+writ=1;
+}
+if(smenu>0&&smenu<15&&smenu!=12)
+{
+splitl();
+address=0xca;
+valuewrite();
+delay(250);
+delay(250);
+
+}
+}
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void mult(void)
+{
+buffer1=digit1[1]*100+digit1[2]*10+digit1[3];    
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											set volt routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void editmode(void)
+{
+keyatod();
+if(menukey==0)
+mpress=0;
+
+if(menukey==1&&mpress==0)
+{
+mpress=1;
+if(writ==1)
+{
+writ=0;
+mult();
+buffer=buffer1;
+	
+/*if(smenu>14)
+    buffer=settings[smenu];*/
+
+original=buffer;
+if(smenu==13)
+{
+result=ovolt;
+docal();
+}
+
+if(smenu==14)
+{
+result=ivolt;
+docal();
+}
+if(smenu<15)
+settings[smenu]=buffer;
+if(settings[2]<3)
+    settings[2]=3;
+
+    FlashWrite();
+    IE|=(1<<7);
+}
+
+
+smenu++;
+if(smenu==13&&calib==0)
+     smenu=15;
+
+calib=0;
+calpress=0;
+if(smenu>17)
+smenu=1;
+display2();
+
+if(smenu==14)
+{
+for(i=0;i<20;i++)
+{
+involtscan();
+buffer=ivolt;
+splitl();
+delay(1);
+address=0xca;
+valuewrite();
+}
+}
+}		
+if(smenu!=12&&smenu<15)
+incdecmode();
+if(smenu==15||smenu==16||smenu==17)
+{
+    if(stopkey==0)
+       spress=0;
+    if(stopkey==1&&spress==0)
+    {
+        writ=1;
+        spress=1;
+        settings[smenu]++;
+        if(settings[smenu]>2)
+            settings[smenu]=1;
+            display2();
+    }
+}
+if(smenu==12&&stopkey==1)
+{
+    calpress++;
+    if(calpress>5)
+    {
+    calib=1;
+    smenu=13;
+    display2();
+if(smenu==13)
+{
+ 
+for(i=0;i<20;i++)
+{
+ outvoltscan();
+ buffer=ovolt;
+splitl();
+delay(1);
+address=0xca;
+valuewrite();   
+}
+}
+}
+    
+}
+}
+
+
+void fline(void)
+{
+chip=0;
+enabler(0x80);
+delay(2);
+chip=1;
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											main routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void sline(void)
+{
+chip=0;
+enabler(0xc0);
+delay(1);
+chip=1;
+}
+
+void display2(void)
+{
+fline();
+chip=1;
+for(h=0;h<16;h++)
+{
+temp=fline1[h];
+enabler(temp);
+delay(1);
+}
+sline();
+for(h=0;h<16;h++)
+{
+if(smenu==1)
+temp=svt[h];
+
+if(smenu==2)
+temp=sen[h];
+
+if(smenu>2&&smenu<7)
+    temp=ohc[h];
+
+if((smenu==4||smenu==6)&&h==5)
+    temp='L';    
+if((smenu==5||smenu==6)&&h==1)
+    temp='I';
+if(smenu==7)
+temp=ctfs[h];
+
+if(smenu==8)
+temp=ovl[h];
+
+if(smenu==10||smenu==9)
+temp=vcut[h];
+if(smenu==9&&h==0)
+    temp='I';
+
+if(smenu==11)
+temp=auton[h];
+
+if(smenu==12)
+temp=calibx[h];
+
+if(smenu==13||smenu==14)
+    temp=iocal[h];
+
+if(smenu==15||smenu==16)
+{
+if(settings[smenu]==1)
+    temp=mod[h];
+
+if(settings[smenu]==2)
+    temp=mod1[h];
+}
+if(smenu==16)
+{
+    if(h==2)
+     temp='B';
+}
+if(smenu==17)
+{
+    temp=rmod[h];
+if(settings[17]==2)
+{
+    if(h==7)
+        temp='e';
+    if(h==8)
+        temp='x';
+}
+}
+if(smenu==14&&h==1)
+    temp='I';
+
+enabler(temp);
+delay(1);
+}
+if(smenu<12)
+{
+qmax=0;
+buffer=settings[smenu];
+splitl();
+address=0xca;
+valuewrite();
+}
+chip=0;
+enabler(0x0c);
+delay(0x02);
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											set volt routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void docal(void)
+{
+    mdiv();
+buffer=result;
+}
+void voltcal(void)
+{
+result=resultx;
+//if(v_cal<670||v_cal>950)
+//v_cal=790;
+if(v_cal<760||v_cal>1000)
+	    v_cal=880;
+original=v_cal;
+mdiv();
+
+    fcompensate=frequency-500;
+    fcompensate=fcompensate>>2;
+    result=result+fcompensate;
+}
+void mdiv(void)
+{
+result=(result*1000)/original;
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											set volt routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void keyatod(void)
+{
+channel=0x0f;//switch
+atodconv();
+if(result>970)
+{
+amanpress=0;
+startkey=0;
+stopkey=0;
+menukey=0;
+automan=0;
+stoppress=0;
+startpress=0;
+menupress=0;
+}
+if(result>670&&result<740)
+{
+    stoppress++;
+   //if(stoppress>1)
+	if(((stoppress>3)&&(automansw==1))||((automansw==0)&&(stoppress>=1)))
+    {
+nokey=0;
+startkey=0;    
+stopkey=1;
+automan=0;
+menukey=0;
+if(reportzero==1)
+{
+settings[18]=0;
+FlashWrite();
+IE|=(1<<7);
+}
+}
+}
+if(result>810&&result<880)
+{
+    startkey=0;
+    stopkey=0;
+    menukey=0;
+    automan=1;
+}
+if(result<70)
+{
+    menupress++;
+  if(menupress>1)
+      {
+automan=0;
+startkey=0;
+stopkey=0;
+menukey=1;
+}
+}
+if(result>480&&result<550)
+{
+    startpress++;
+  // if(startpress>1)
+	if(((startpress>3)&&(automansw==1))||((automansw==0)&&(startpress>=1)))
+    {
+    nokey=0;
+    automan=0;
+    stopkey=0;
+    startkey=1;
+}
+}
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								o/p freq conversion routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void zccheck(void)
+{
+ zerodetect=0;
+while(zerodetect<3)//3
+{
+IE&=~(1<<7);
+adcal1();
+//if(result2>12)
+//zerodetect=0;
+//if(result2<7)
+if(result2<7)
+zerodetect++;
+}   
+ IE|=(1<<7);
+}
+/*void lfreq(void)
+{
+icome++;
+channel=0X0b;
+zccheck();
+T2CON|=0x01;//tmr2
+T2MOD =0x24;
+RCMP2L=0xff;//65.535ms
+RCMP2H=0xff;
+TL2=0x00;
+TH2=0x00;	
+TF0=0;
+TMOD|=0x01;//tmr0
+//TL0=0xcb;
+//TH0=0xfe;//232us
+TL0=0x55;
+TH0=0xfd;//512us
+TR0=1;
+TR2=1;
+TF0=0;
+while(!TF0);
+zccheck();
+TL0=0x55;
+TH0=0xfd;//512us
+TF0=0;	
+while(!TF0);
+zccheck();
+if(TH2<69)//54
+   TH2=69;
+if(TH2>85)//47
+   TH2=85;
+TR2=0;
+//if(TH2<64)
+  // TH2=64;
+if(ovolt<150)
+    TH2=78;
+result=TH2*256+TL2;
+resulty=result+resulty;
+if(icome>4)
+{
+    icome=0;
+result=resulty;
+//resulty=result;
+resulty=(resulty*10)/1645;//329;//478;
+fscan=resulty;
+result=50000000/result;
+frequency=result;
+resulty=0;
+/*
+if(ovolt<150)
+{
+frequency=500;
+fscan=607;
+}
+    if(fscan<547)
+    fscan=547;
+ * */
+/*
+if(frequency>600||frequency<400)
+{
+   frequency=500;
+   fscan=607;
+}
+ * 
+}
+if(count>=5)
+{
+    lcdinit();
+    chip=0;
+    enabler(0x80);
+    count=0;
+}
+}*/
+void lfreq(void)
+{
+icome++;
+channel=0X0b;
+zccheck();
+T2CON|=0x01;//tmr2
+T2MOD =0x24;
+RCMP2L=0xff;//65.535ms
+RCMP2H=0xff;
+TL2=0x00;
+TH2=0x00;	
+TF0=0;
+TMOD|=0x01;//tmr0
+TL0=0x54;
+TH0=0xd6;//8ms
+TR0=1;
+TR2=1;
+TF0=0;
+while(!TF0);
+zccheck();
+TL0=0x54;
+TH0=0xd6;//8ms
+TF0=0;	
+while(!TF0);
+zccheck();
+if(TH2<69)//54
+   TH2=69;
+if(TH2>85)//47
+   TH2=85;
+TR2=0;
+//if(TH2<64)
+  // TH2=64;
+if(ovolt<150)
+    TH2=78;
+
+result=TH2*256+TL2;
+resulty=result+resulty;
+if(icome>4)
+{
+	icome=0;
+result=resulty;
+//resulty=result;
+resulty=(resulty*10)/1315;//1645;//329;//478;
+fscan=resulty;
+result=50000000/result;
+frequency=result;
+resulty=0;
+/*
+if(ovolt<150)
+{
+frequency=500;
+fscan=607;
+}
+    if(fscan<547)
+    fscan=547;
+ * */
+/*
+if(frequency>600||frequency<400)
+{
+   frequency=500;
+   fscan=607;
+}*/
+}
+if(count>=5)
+{
+ lcdinit();
+ chip=0;
+ enabler(0x80);
+ count=0;
+}
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								                      Aprom read& write routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr)
+{
+    //UINT8 rdata;
+    rdata = *u16_addr >> 8;
+    return rdata;
+}
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
+{
+    unsigned char looptmp = 0;
+    unsigned int u16_addrl_r;
+    unsigned int RAMtmp;
+
+    //Check page start address
+    u16_addrl_r = (u16EPAddr / 128) * 128;
+
+    //Save APROM data to XRAM0
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        RAMtmp = Read_APROM_BYTE((unsigned int code *)(u16_addrl_r + looptmp));
+        page_buffer[looptmp] = RAMtmp;
+    }
+
+    // Modify customer data in XRAM
+    page_buffer[u16EPAddr & 0x7f] = u8EPData;
+
+    //Erase APROM DATAFLASH page
+    IAPAL = u16_addrl_r & 0xff;
+    IAPAH = (u16_addrl_r >> 8) & 0xff;
+    IAPFD = 0xFF;
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x22;
+    set_IAPTRG_IAPGO;
+
+    //Save changed RAM data to APROM DATAFLASH
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x21;
+
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        IAPAL = (u16_addrl_r & 0xff) + looptmp;
+        IAPAH = (u16_addrl_r >> 8) & 0xff;
+        IAPFD = page_buffer[looptmp];
+        set_IAPTRG_IAPGO;
+    }
+
+    clr_IAPUEN_APUEN;
+    clr_CHPCON_IAPEN;
+}
+void FlashWrite(void)
+{
+	IE&=~(1<<7);
+for(loop=1,loop2=1;loop<32,loop2<61;loop++,loop2+=2)
+{
+	     highbyte=((settings[loop]&(0xFF00))>>8);
+	     lowbyte=(settings[loop]&(0x00FF));
+	     Write_DATAFLASH_BYTE(16800+loop2,highbyte);
+	      Write_DATAFLASH_BYTE(16800+loop2+1,lowbyte);
+}
+IE|=(1<<7);
+}
+
+void dataread(void)
+{
+	IE&=~(1<<7);
+ for(lcome=1,income2=1;lcome<32,income2<61;lcome++,income2+=2)
+    {
+       
+           Read_APROM_BYTE(16800+income2);
+			         highbyte=rdata;
+			     Read_APROM_BYTE(16800+income2+1);
+			       lowbyte=rdata;
+			 settings[lcome]=((highbyte<<8)|(lowbyte));
+     //   if(settings[lcome]>9999)
+       //     settings[lcome]=0;
+      }
+    for(lcome=15;lcome<18;lcome++)
+    {
+    if(settings[lcome]!=2)
+       settings[lcome]=1;
+    }
+		for(lcome=19;lcome<32;lcome++)
+    {
+    if(settings[lcome]>=65530)
+       settings[lcome]=0;
+    }
+	  	IE|=(1<<7);
+		  if(settings[1]>=65530)//setvolt
+			settings[1]=200;
+			if(settings[2]>=65530)//sens
+			settings[2]=3;
+			if(settings[3]>=65530)//ophihgh
+			settings[3]=255;
+			if(settings[4]>=65530)//oplow
+			settings[4]=170;
+			if(settings[5]>=65530)//iphigh
+			settings[5]=280;
+			if(settings[6]>=65530)//iplow
+			settings[6]=170;
+			if(settings[7]>=65530)//ctfact
+			settings[7]=174;                                           
+			if(settings[8]>=65530)//ovl
+			settings[8]=35;
+			if(settings[9]>=65530)//icut
+			settings[9]=3;
+			if(settings[10]>=65530)//vcut
+			settings[10]=3;
+			if(settings[11]>=65530)//on delay
+			settings[11]=3;
+			if(settings[18]>=65530)//on delay
+			settings[18]=0;
+
+}
+/*count1=0;
+while(count1<8)
+{
+dclock=0;
+r3x=r3x<<1;
+if(CARRY)
+{
+ddata=1;
+dclock=1;
+}
+if(!CARRY)
+{
+ddata=0;
+dclock=1;
+}
+count1++;
+}
+dclock=0;
+ddata=0;
+
+//
+if(ovolt>205)
+    TH2=77;
+//
+*/
+
+
