@@ -1,0 +1,349 @@
+#include "MS51_32K.h"
+#include "Function_Define_MS51_32K.h"
+#include "sfr_macro_ms51_32k.h"
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdarg.h>
+
+/*clock*/
+bit BIT_TMP; 
+
+//#define DEBUG_ON 
+
+#define  HIRC_24        6
+#define  HIRC_16        7
+#define  HIRC_166       8
+/*clock*/
+/*spi*/
+#define SPI_2MBPS       2       /* SPI communication at 2 Megabits per second - fastest speed */
+#define SPI_1MBPS       1       /* SPI communication at 1 Megabit per second - medium speed */
+#define SPI_500KBPS     5       /* SPI communication at 500 Kilobits per second - slower but more reliable */
+
+#define SPI_MODE0       0       /* Clock idle low, data sampled on rising edge */
+#define SPI_MODE1       1       /* Clock idle low, data sampled on falling edge */
+#define SPI_MODE2       2       /* Clock idle high, data sampled on rising edge */
+#define SPI_MODE3       3       /* Clock idle high, data sampled on falling edge */
+/*spi*/
+
+/*LED*/
+typedef enum {
+    LED_OFF = 0,        /* Turn LED completely off */
+    LED_ON,             /* Turn LED completely on */
+    LED_TOGGLE          /* Switch LED state (on->off or off->on) */
+} led_action_t;
+/*LED*/
+
+/*Timer*/
+#define DELAY_UNIT_MS   1       /* Delay unit in milliseconds for short delays */
+#define DELAY_UNIT_SEC  2       /* Delay unit in seconds for longer delays     */
+/*Timer*/
+
+/*clock*/
+void MODIFY_HIRC(unsigned char u8HIRCSEL)
+{
+    unsigned char hircmap0,hircmap1,offset,judge;
+    unsigned int trimvalue16bit;
+
+    SFRS = 0;
+    switch (u8HIRCSEL)
+    {
+        case HIRC_24: IAPAL = 0x38; break;
+        case HIRC_16: IAPAL = 0x30; break;
+        case HIRC_166: IAPAL = 0x30; break;
+    }
+
+    set_CHPCON_IAPEN;
+    IAPAH = 0x00;
+    IAPCN = READ_UID;
+    set_IAPTRG_IAPGO;
+    hircmap0 = IAPFD;
+    IAPAL++;
+    set_IAPTRG_IAPGO;
+    hircmap1 = IAPFD;
+
+    switch (u8HIRCSEL)
+    {
+        case HIRC_166:
+            trimvalue16bit = ((hircmap0 << 1) + (hircmap1 & 0x01));
+            judge = trimvalue16bit & 0xC0;
+            offset = trimvalue16bit & 0x3F;
+            trimvalue16bit -= 14;
+
+            IAPCN = READ_DID;
+            IAPAL = 1;
+            IAPAH = 0;
+            set_IAPTRG_IAPGO;
+            if ((IAPFD==0x4B)||(IAPFD==0x52)||(IAPFD==0x53))
+            {
+                if (offset < 15)
+                {
+                    if ((judge==0x40)||(judge==0x80)||(judge==0xC0))
+                        trimvalue16bit -= 14;
+                }
+                else
+                    trimvalue16bit -= 4;
+            }
+            hircmap0 = trimvalue16bit >> 1;
+            break;
+        default: break;
+    }
+
+    TA = 0xAA; TA = 0x55; RCTRIM0 = hircmap0;
+    TA = 0xAA; TA = 0x55; RCTRIM1 = hircmap1;
+    clr_CHPCON_IAPEN;
+    PCON &= CLR_BIT4;
+}
+/*clock*/
+
+/*uart*/
+void UART4_Open(uint32_t u32SysClock, uint32_t u32Baudrate)
+{
+	  TA = 0xAA; TA = 0x55; SFRS = 2;  //for uart4
+    P23_QUASI_MODE;
+    P22_QUASI_MODE; 
+    set_SC2CR0_SCEN;
+    set_SC2CR1_UARTEN;
+    set_SC2CR1_CLKKEEP;      
+    clr_SC2CR0_CONSEL;
+    clr_SC2CR0_AUTOCEN;
+    SC2ETURD0 = LOBYTE(u32SysClock/8/u32Baudrate-1);
+    SC2ETURD1 &= 0xF0;
+    SC2ETURD1 |= (HIBYTE(u32SysClock/8/u32Baudrate-1))&0x0F; 
+    set_SC2CR1_PBOFF;
+    SC2CR1 &= 0xCF;
+    set_SC2CR0_NSB;
+}
+
+void UART4_Send_Data(uint8_t c)
+{
+    clr_SC2CR0_TXOFF;
+    SC2DR = c;
+    while(!(SC2TSR&SET_BIT3));
+    clr_SC2CR0_TXOFF;
+}
+
+void UART4_Send_String(const char *str)
+{
+    while (*str)
+    {
+        UART4_Send_Data((uint8_t)*str++);
+    }
+}
+
+void int_to_str(unsigned int value, char *buf, unsigned char base)
+{
+    xdata char temp[8];
+    xdata char *p;
+    xdata unsigned int digit;
+
+    p = temp;
+
+    if (value == 0)
+    {
+        *buf++ = '0';
+        *buf = '\0';
+        return;
+    }
+
+    while (value > 0)
+    {
+        digit = value % base;
+        if (digit < 10)
+        {
+            *p++ = '0' + digit;
+        }
+        else
+        {
+            *p++ = 'A' + (digit - 10);
+        }
+        value = value / base;
+    }
+
+    while (p != temp)
+    {
+        *buf++ = *--p;
+    }
+
+    *buf = '\0';
+}
+
+/*----------------------------------------
+  Minimal sprintf for 8051 (Keil C51)
+  Supports: %d, %u, %x, %c, %s, %f (2-decimal)
+-----------------------------------------*/
+unsigned char mini_sprintf(char *out, const char *fmt, ...)
+{
+    xdata char *str;
+    xdata char buf[16];
+    va_list args;
+
+    int val;
+    unsigned int uval;
+    unsigned int int_part;
+    unsigned int frac_part;
+    char c;
+    char *s;
+    float fval;
+    char *p;
+    unsigned char precision;
+    float mult;
+    unsigned char ch;
+
+    str = out;
+    va_start(args, fmt);
+
+    while (*fmt)
+    {
+        if (*fmt == '%')
+        {
+            fmt++;
+            precision = 2;   /* Default for float */
+
+            /* Parse optional . or 0. for float precision (%.1f / %0.2f) */
+            if (*fmt == '0' || *fmt == '.')
+            {
+                if (*fmt == '0')
+                    fmt++;
+                if (*fmt == '.')
+                {
+                    fmt++;
+                    if ((*fmt >= '0') && (*fmt <= '9'))
+                    {
+                        precision = *fmt - '0';
+                        fmt++;
+                    }
+                }
+            }
+
+            switch (*fmt)
+            {
+                case 'd':
+                    val = va_arg(args, int);
+                    if (val < 0)
+                    {
+                        *str++ = '-';
+                        val = -val;
+                    }
+                    int_to_str((unsigned int)val, buf, 10);
+                    p = buf;
+                    while (*p) *str++ = *p++;
+                    break;
+
+                case 'u':
+                    uval = va_arg(args, unsigned int);
+                    int_to_str(uval, buf, 10);
+                    p = buf;
+                    while (*p) *str++ = *p++;
+                    break;
+
+                case 'x':
+                    uval = va_arg(args, unsigned int);
+                    int_to_str(uval, buf, 16);
+                    p = buf;
+                    while (*p) *str++ = *p++;
+                    break;
+
+                case 'c':
+                    c = (char)va_arg(args, int);
+                    *str++ = c;
+                    break;
+
+                case 's':
+                    s = va_arg(args, char *);
+                    while (*s) *str++ = *s++;
+                    break;
+
+                case 'f':
+                    fval = (float)va_arg(args, double);
+                    if (fval < 0)
+                    {
+                        *str++ = '-';
+                        fval = -fval;
+                    }
+
+                    mult = 1.0f;
+                    for (ch = 0; ch < precision; ch++)
+                        mult *= 10.0f;
+
+                    int_part = (unsigned int)fval;
+                    frac_part = (unsigned int)((fval - int_part) * mult + 0.5);
+
+                    int_to_str(int_part, buf, 10);
+                    p = buf;
+                    while (*p) *str++ = *p++;
+
+                    *str++ = '.';
+
+                    /* Add leading zeros if necessary */
+                    if ((precision == 2 && frac_part < 10) || (precision == 1 && frac_part < 1))
+                        *str++ = '0';
+
+                    int_to_str(frac_part, buf, 10);
+                    p = buf;
+                    while (*p) *str++ = *p++;
+                    break;
+
+                default:
+                    *str++ = '%';
+                    *str++ = *fmt;
+                    break;
+            }
+        }
+        else
+        {
+            *str++ = *fmt;
+        }
+        fmt++;
+    }
+
+    *str = '\0';
+    va_end(args);
+    return (unsigned char)(str - out);
+}
+/*uart*/
+/*Timer*/
+void Timer2_DELAY(unsigned int time, unsigned char unit)
+{
+    unsigned long loops = (unit == DELAY_UNIT_MS) ? time : (time * 1000UL);
+    unsigned long i;
+    
+    // Configure Timer2 ONCE, not in every loop iteration
+    T2MOD = 0x00;
+    RCMP2H = 0xC1;
+    RCMP2L = 0x80;
+    
+    for (i = 0; i < loops; i++)
+    {
+        TH2 = 0xC1;    // Reload timer values
+        TL2 = 0x80;
+        TF2 = 0;       // Clear flag
+        TR2 = 1;       // Start timer
+        while(!TF2);   // Wait for overflow
+        TR2 = 0;       // Stop timer
+        TF2 = 0;       // Clear flag
+    }
+}
+/* Timer */
+
+/* modbus */
+void main(void)
+{
+    xdata char buf[64];
+    int temp_v = 0;
+    float f_1 = 0;
+
+    MODIFY_HIRC(HIRC_16);
+    ENABLE_UART4_TXD_P23;
+    UART4_Open(16000000, 115200);
+
+    while (1)
+    {
+        mini_sprintf(buf, "int=%dC, Hex=%x, Str=%s, f1=%0.1f, f2=%0.2f", 
+                     temp_v++, 0x1A2B, "Motor", f_1, f_1);
+        UART4_Send_String(buf);
+        UART4_Send_String("\n");
+        f_1 += 0.25f;
+        Timer2_DELAY(500, DELAY_UNIT_MS);
+    }
+}
+
