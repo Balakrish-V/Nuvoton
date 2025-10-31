@@ -1,0 +1,1519 @@
+
+#include<pic.h>
+#include<math.h>
+#define LCD PORTB
+#define chip RC4
+#define enab RC5
+//#define _XTAL_FREQ 20000000
+#define fwd             RD6
+#define rev             RD7
+#define sensor1         RA0
+#define sensor2         RA1
+#define trigip          RD2
+#define trigop          RD1
+#define solenoid1       RC1
+#define solenoid2       RA4
+#define greenled        RD0
+#define redled          RC0
+#define yellowled       RC3
+#define		trisenab	TRISC7
+#define		trisread	TRISC6
+
+
+#define		ddata		RD5
+#define		dclock		RD4
+
+#define		edat		RD5
+#define		eclk		RD4
+
+
+#define		tdat		TRISD5
+#define		tclk		TRISD4
+
+
+
+
+
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											  constant  declaration
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+#define dp '.'
+#define hi '-'
+#define ha '/'
+#define ac ':'
+#define nu ' ' 
+#define ast '*'
+#define ca 'A'
+#define cb 'B'
+#define cc 'C'
+#define cd 'D'
+#define ce 'E'
+#define cf 'F'
+#define cg 'G'
+#define ch 'H'
+#define ci 'I'
+#define cj 'J'
+#define ck 'K'
+#define cl 'L'
+#define cm 'M'
+#define cn 'N' 
+#define co 'O' 
+#define cp 'P' 
+#define cq 'Q'
+#define cr 'R'
+#define cs 'S'
+#define ct 'T'
+#define cu 'U'
+#define cv 'V' 
+#define cw 'W'
+#define cx 'X' 
+#define cy 'Y'
+#define cz 'Z' 
+#define da '0'
+#define db '1'
+#define dc '2'
+#define dd '3'
+#define de '5'
+#define di '6'
+#define df '7'
+#define dg '8'
+#define dh '9'
+#define dp '.'
+
+	#define sa 'a'
+	#define sb 'b'
+	#define sc 'c'
+	#define sd 'd'
+	#define se 'e'
+	#define sf 'f'
+	#define sg 'g'
+	#define sh 'h'
+	#define si 'i'
+	#define sj 'j'
+	#define sk 'k'
+	#define sl 'l'
+	#define sm 'm'
+	#define sn 'n' 
+	#define so 'o'
+	#define sp 'p' 
+	#define sq 'q'
+	#define sr 'r'
+	#define ss 's'
+	#define st 't'
+	#define su 'u'
+	#define sv 'v' 
+	#define sw 'w'
+	#define sx 'x' 
+	#define sy 'y'
+	#define sz 'z'
+
+const char add[]={0x01,0x02,0X03,0X04,0x05,0x06,0X07,0X08,0x09,0x20,0X21,0X22,0x23,0x24,0X25,0X10,0x11,0x12,0X13,0X14,0X15,0X16,0X17,0X18,0X19,0X26};//EEPROM ADDRESS
+const char init2[]={0x38,0x0A,0x38,0x01,0x08,0x01,0x01,0x05,0x06,0x01,0x0f,0x01,0x80,0x01,0x01,0x00};
+char reg=0,reg7=0,bm4=0,r1=0,r2=0,r3=0,t3=0,int2=0,data=0,data1=0,temp=0;
+/*******************************Main display***************************************************/
+const char temperaturestring[]= {nu,nu,ct,ce,cm,cp,nu,':',nu,nu,nu,nu,nu,nu,nu,nu};
+const char proximitystring[]=   {nu,nu,cc,co,cu,cn,ct,':',nu,nu,nu,nu,nu,nu,nu,nu};
+const char temp_maximum[]= {nu,nu,ct,ce,cm,cp,nu,cm,ca,cx,nu,':',nu,nu,nu,nu};
+const char count_limits[]= {cc,co,cu,cn,ct,cl,ci,cm,ci,ct,nu,':',nu,nu,nu,nu};
+
+const char cusname[]=	    {nu,nu,cl,sa,sk,ss,sh,sm,si,nu,cc,sa,sr,sd,nu,nu};//Cus
+const char cusnum[]=		{nu,nu,nu,'9','8','4','3','9','3','3','8','0','8',nu,nu,nu};
+const char modd0[]=          {cr,ct,cc,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+const char modd1[]=          {ct,cr,cg,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+const char frwd[]=           {cf,cw,cd,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+const char rrev[]=           {cr,ce,cv,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+const char fault[]=          {cf,ca,cu,cl,ct,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+const char parkk[]=          {cp,ca,cr,ck,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+const char eoc[]=			{ce,co,cc,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+const char eoc1[]=			{ce,co,cc,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+
+
+
+const char rt1n[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,db,':',co,cn,nu};
+const char rt1f[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,db,':',co,cf,cf};
+const char rt2n[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,dc,':',co,cn,nu};
+const char rt2f[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,dc,':',co,cf,cf};
+const char tmrtrg[]=       {nu,nu,nu,nu,nu,nu,nu,co,cf,ct,'-',nu,nu,nu,nu,nu};
+
+/************************Settings display*********************************************************/
+const char fline1[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};//Set mode
+
+const char mod1[]=		{nu,nu,cm,so,sd,se,':',cr,ct,cc,nu,nu,nu,nu,nu,nu};//Mode:RTC
+const char mod2[]=		{nu,nu,cm,so,sd,se,':',ct,cr,ci,cg,cg,ce,cr,nu,nu};//Mode:TRIGGER
+
+
+const char ten[]=		{cr,cu,cn,ct,si,sm,se,'(',cm,')',':',nu,nu,nu,nu,nu};//RUNTime(M):
+const char rt1[]=		{ct,db,co,cn,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T1ON(H:M)-
+const char rt2[]=		{ct,db,co,cf,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T1OF(H:M)-
+const char rt3[]=		{ct,dc,co,cn,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T2ON(H:M)-
+const char rt4[]=		{ct,dc,co,cf,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T2OF(H:M)-
+const char flt[]=		{cf,cl,ct,cs,cn,cs,ce,'(',cs,')',':',nu,nu,nu,nu,nu};//FLTSNSE(s):
+const char prk[]=		{cp,cr,ck,ct,ci,cm,ce,'(',cs,')',':',nu,nu,nu,nu,nu};//PRKTIME(s):
+const char spd1[]=		{cm,so,st,so,sr,nu,'%',nu,':',de,da,nu,nu,nu,nu,nu};//Motor % :30
+const char spd2[]=		{cm,so,st,so,sr,nu,'%',nu,':',di,de,nu,nu,nu,nu,nu};//Motor % :50
+const char spd3[]=		{cm,so,st,so,sr,nu,'%',nu,':',dg,da,nu,nu,nu,nu,nu};//Motor % :75
+const char spd4[]=		{cm,so,st,so,sr,nu,'%',nu,':',db,da,da,nu,nu,nu,nu};//Motor % :100
+const char rtc[]=		{cr,ct,cc,'(',ch,':',cm,')',nu,'-',nu,nu,nu,nu,nu,nu};//RTC(H:M) -
+const char home[] = 	{ch,co,cm,ce,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+const char trighome[] =  {ch,co,cm,ce,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+const char space[] = {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+
+bit automan,swrelease,datachang,chang,mpress,spress,ipress;
+bit menukey,sidekey,inckey,setrun;
+bit fwdflag;
+
+char hr=0,sec=0,hour=0,minute=0,initialsense=0,date=0,month=0,year=0,buf1=0,buf2=0,date1=0,mont1=0,hou1=0,minut1=0,msec=0;
+char eemem=0,txbuf=0,datai=0,buff=0,ibm=0,phsp=0,dbuf[5],aman=0,speed=2,speed_flag=0,disdat=0,cursor=0,clearinglog=0,i=0;
+char count=0,menu=0,blink=0,cblink=0,digit1[5],smenu=0,sensi=0,menu_change=0;
+char h=0,menu1=0,t1n=0,t1f=0,t2n=0,t2f=0,oft=0,park=0;
+char j=0,a=0,b=0,c=0,d=0,k=0;
+bank2 char address=0,lmenu=0,adcome=0;
+bank2 char setruntime=0,sidetime=0,inctime=0,menutime=0;
+
+unsigned int temp_min=0,temp_max=0,count_limit=0,count_save=0,rtz2f_timer=0,park_time=0,fault_time=0,trig_timer=0,rtc_time=0;
+unsigned int buffer=0,result=0,result1=0,parkrun=0,tempmax=0, sensetimes=0,countlimit=0;
+unsigned int m=0,n=0,o=0,timerhigh=0;
+
+bank2 unsigned int duty=0,readrom=0,doad=0;
+bank1 unsigned int swactive=0,pwmspeed=0;
+unsigned char forwardstart=0,revstart=0;
+
+bit offtimerflag,rtcdispflag, dispsecflag,dispfirstflag,countflag,countfaultflag,tempfaultflag,trigOk,cleancycle,timeok,faultstartcheck,trigover,endtrig1;
+bit endofcycleflagrtc,endofcycleflagtrg,eoctrglck,eoctrgwrite,eocrtcwrite;
+
+
+unsigned char oneminute=0,rtcdispcount=0, secondscount=0,faultsec=0,faultcount=0,faultstartcount=0,rtcdisplaystate=0,faultime=0;
+unsigned char setbit=0,endtrig=0,endcheck=0,trigcheck=0,trigruncomplete=0,mainscreen=0,rtcruncomplete=0;
+unsigned int triggertimertemp=0,offtimcount=0,trigsec=0, endsec=0,rtcnow=0,futuretime=0,presenttime=0,runningtime=0,rtz1n=0,rtz1f=0,rtz2n=0,rtz2f=0,trigtime=0;
+/////////////////////////////proximity.//////////////////////////////////////
+bit startproximitycountflag=0;
+unsigned int proximitycount=0;
+unsigned rotationcount=0;
+//------Temperature----------------------------------------------------------------/
+unsigned int tempResult = 0, adcResult = 0;
+bank1 unsigned long tempResultAverage = 0;
+unsigned char temperature1 = 0;
+double tempResistance = 0;
+unsigned int iterator = 0;
+unsigned char highTemp = 0;
+unsigned int displaycount=0;
+void tempScan(void);
+int adcScan(void);
+unsigned char timervalue=0;
+/////////////////////////////////////////////////////////////////////////
+//////////////////proximity & temperature valuewrite/////////////////////
+void tempandptywrite(void);
+
+
+
+void delay1(int);
+int pwm(int);
+void delay(char);
+void lcdinit();
+void enabler(char );
+sewrite(char ,char);
+void timecompare(void);
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											main routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+main()
+{
+
+init();
+delay1(5);
+lcdinit();
+dataread();
+tempfaultflag=0;
+countfaultflag=0;
+yellowled=0;
+redled=0;
+greenled=0;
+
+
+while(1)
+{
+
+
+/**************************************************************************************/
+ if(automan==0){
+       
+        chip=0;
+        enabler(0x01);
+        menu=0;
+yellowled=0;
+redled=0;
+greenled=0;
+	display();
+    }
+/*****************************************************************************************/
+
+/*****************************************************************************************/
+/*									  RUN MODE										     */
+/*****************************************************************************************/
+    while(automan==0)//Run mode.
+	{
+
+tempScan();
+	if(displaycount>6)
+	{
+
+	display();
+
+	displaycount=0;
+	}	
+		tempandptywrite();
+
+	proximitycount=timerhigh*256+TMR0;
+if(proximitycount>0){
+count_save=count_save+proximitycount;
+buffer=count_save;
+address=10;
+dualwrite();
+proximitycount=0;
+timerhigh=0;
+TMR0=0;
+}
+
+if(count_save>=count_limit){
+countfaultflag=1;
+}
+if(temperature1>=temp_max)
+{
+tempfaultflag=1;
+}
+if((temperature1<(temp_max-5))&&(tempfaultflag==0))
+{
+tempfaultflag=0;
+}
+if(countfaultflag==1){
+delay1(5);
+greenled=1;
+delay1(5);
+}
+
+if(tempfaultflag==1){
+delay1(5);
+redled=1;
+delay1(5);
+}
+if(countfaultflag==0)
+greenled=0;
+
+if(tempfaultflag==0)
+redled=0;
+
+/*****************************************************************************************************/
+
+    }
+/*******************************************************************************************************/
+ if(automan==1)
+{
+        
+        chip=0;
+        enabler(0x01);
+        menu=0;
+	    display2();
+		yellowled=0;
+redled=0;
+greenled=0;
+    }
+/***********************************************SETTINGS**************************************************************/
+     while(automan==1){//Set mode.
+        // sline();
+        // enabler('K');
+			keyatod();
+		if((menu_change!=0)&&(menu1==0))
+		{
+		display2();
+		menu1=1;
+		}
+	
+		keyscan();
+	
+
+    }
+/*********************************************************************************************/
+}
+}
+/***********************************************************************************************/
+ void delay1(int t8)
+{
+for(r1=0;r1<t8;r1++)
+	{
+	for(r2=0;r2<250;r2++)
+		{
+		for(r3=0;r3<250;r3++);
+		}
+
+	}
+}
+
+/*----------------------------------------------------------------------------------------------------------------------------------
+							LCD routine
+-----------------------------------------------------------------------------------------------------------------------------------*/
+void delay(char t1)
+{
+for(r1=0;r1<t1;r1++)
+	{
+	for(r2=0;r2<60;r2++)
+		{
+		for(r3=0;r3<5;r3++);
+		}
+	}
+}
+
+
+
+void dataout()
+{
+count=0;
+while(count<8)
+{
+dclock=0;
+r3=r3<<1;
+if(CARRY)
+{
+ddata=1;
+dclock=1;
+}
+if(!CARRY)
+{
+ddata=0;
+dclock=1;
+}
+count++;
+}
+dclock=0;
+ddata=0;
+}
+void enabler(char t4)
+{
+     RD5=0;
+    enab=1;
+    data=t4;
+//    data=data>>4;
+//    data1=PORTB&0XF0;
+//    data=data|data1;
+    PORTB=data;
+    for(r3=0;r3<100;r3++)
+        ;
+    enab=0;
+    if(bm4==1){
+        for(r1=0;r1<50;r1++){
+            for(r3=0;r3<100;r3++){
+                
+            }
+    }
+    }
+//    enab=1;
+//     for(r3=0;r3<100;r3++)
+//         ;
+////     data=t4&0X0F;
+////     data1=PORTB&0XF0;
+////     data=data|data1;
+//     PORTB=data;
+//     enab=0;
+//     if(bm4==1){
+//               for(r1=0;r1<50;r1++)
+//            for(r3=0;r3<100;r3++)
+//                ;  
+//     }
+//          for(r3=0;r3<100;r3++);  
+}
+void lcdinit()	
+{
+	reg=0;
+	while(reg<15)
+	{
+	reg7=init2[reg];
+	enabler(reg7);
+	reg++;
+	if(reg==14)
+	return;
+	reg7=init2[reg];
+	delay(reg7);
+	reg++;
+	}
+}
+fline(){
+    chip=0;
+    enabler(0x80);
+    delay(2);
+    chip=1;
+}
+sline(){
+    chip=0;
+    enabler(0xC0);
+    delay(1);
+    chip=1;
+}
+
+
+
+/*----------------------------------------------------------------------------------------------------------------------------------
+							time read routine
+-----------------------------------------------------------------------------------------------------------------------------------*/
+
+rwrbyte1(char k,char add)
+{
+bstart();
+txbuf=0xd0;
+tx();
+txbuf=add;
+tx();
+txbuf=k;
+tx();
+bstop();
+delay(1);
+}
+chdvit()
+{
+buf2=(buf1/0x10)+0x30;
+buf1=(buf1%0x10)+0x30;
+}
+chdiv()
+{
+delay(1);
+chdvit();
+enabler(buf2);
+delay(1);
+enabler(buf1);
+delay(1);
+}
+rread1(char jj)
+ {
+
+bstart();
+txbuf=0xd0;
+tx();
+txbuf=jj;
+tx();
+bstart();
+txbuf=0xd1;
+tx();
+count=0;
+rx();
+eemem=eemem|0x40;
+bitout();
+bstop();
+}
+timread()
+{
+rread1(0);
+sec=datai;
+rread1(1);
+minute=datai;
+rread1(2);
+hour=datai;
+rread1(4);
+date=datai;
+rread1(5);
+month=datai;
+rread1(6);
+year=datai;
+}
+timprob()
+{
+rread1(0);
+datai=datai&0x80;
+if(datai==0x80)//Reinitialises RTC
+{
+datai=0;
+rwrbyte1(datai,0x00);
+}
+}
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                            Internal EEprom
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------------------------------------------------------------
+                                    EEPROM write
+-----------------------------------------------------------------------------------------------------------------------------------*/
+sewrite(char address,char edata)
+{
+EEADR=address;
+EEDATA=edata;
+EEPGD=0;
+GIE=0;
+WREN=1;
+EECON2=0X55;
+EECON2=0XAA;
+WR=1;
+while(!EEIF);
+EEIF=0;
+WREN=0;
+GIE=1;
+}
+/*----------------------------------------------------------------------------------------------------------------------------------
+                                    EEPROM Read
+-----------------------------------------------------------------------------------------------------------------------------------*/
+eeread(char eadr)//single read
+{
+EEPGD=0;
+EEADR=eadr;
+RD=1;
+}   
+readpair()// double read
+{
+eeread(doad);
+readrom=EEDATA;
+doad++;
+eeread(doad);
+readrom=readrom*256+EEDATA;
+//if(readrom==65535)
+//readrom=0;
+}
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							multiply routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+multiply()
+{
+buffer=buffer*256+datai;
+}
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                EEprom Write
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+dualwrite()
+{
+    /*********To store data in 8-bits*********/
+reg=buffer/256;//
+sewrite(address,reg);
+reg=buffer%256;
+sewrite(address+1,reg);
+}
+
+
+
+dataread()
+{
+ 
+doad=4;
+readpair();
+temp_max=readrom;
+if(temp_max==0xFFFF)
+    temp_max=31;
+
+doad=6;
+readpair();
+count_limit=readrom;
+if(count_limit==0xFFFF)
+    count_limit=10;
+doad=10;
+readpair();
+count_save=readrom;
+timerhigh=0;
+TMR0=0;
+if(count_save==0xFFFF)
+    count_save=0;
+/*if(proximitycount<1000)
+{
+timerhigh=proximitycount/256;
+TMR0=proximitycount%256;
+}*/
+
+/*doad=8;
+readpair();
+rtz2f_timer=readrom;
+if(rtz2f_timer==0xFFFF)
+    rtz2f_timer=2020;
+
+doad=10;
+readpair();
+trig_timer=readrom;
+if(trig_timer==0xFFFF)
+    trig_timer=2;
+
+doad=12;
+readpair();
+fault_time=readrom;
+if(fault_time==0xFFFF)
+    fault_time=20;
+
+doad=14;
+readpair();
+park_time=readrom;
+if(park_time==0xFFFF)
+    park_time=5;
+
+eeread(16);
+    speed=EEDATA;
+    if(speed==0xff)
+        speed = 1;
+
+    doad=17;
+readpair();
+rtc_time=readrom;
+if(rtc_time==0xFFFF)
+    rtc_time=0;
+
+
+
+
+doad=56;
+readpair();
+offtimcount=readrom;
+if(offtimcount==0xffff)
+	offtimcount=0;
+
+eeread(42);
+trigcheck=EEDATA;
+if(trigcheck==0xff)
+trigcheck=0;
+
+if(trigcheck==1)
+countflag=1;
+
+eeread(45);
+eoctrglck=EEDATA;
+if(eoctrglck==0xff)
+{
+eoctrglck=1;
+}
+eeread(46);
+endofcycleflagrtc=EEDATA;
+if(endofcycleflagrtc==0xff)
+{	
+endofcycleflagrtc=1;
+}*/
+
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom bstart routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+bstart()
+{
+edat=1;
+tclk=0;
+tdat=0;
+eclk=0;
+for(r3=0;r3<15;r3++);
+eclk=1;
+for(r3=0;r3<15;r3++);
+edat=0;
+for(r3=0;r3<15;r3++);
+eclk=0;
+for(r3=0;r3<15;r3++);
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom bstop routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+bstop()
+{
+tclk=0;
+tdat=0;
+edat=0;
+for(r3=0;r3<15;r3++);
+eclk=1;
+for(r3=0;r3<15;r3++);
+edat=1;
+for(r3=0;r3<15;r3++);
+eclk=0;
+for(r3=0;r3<15;r3++);
+
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom bitout routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+bitout()
+{
+tclk=0;
+tdat=0;
+buff=eemem&0x40;
+if(buff==0x40)
+edat=1;
+if(buff!=0x40)
+edat=0;
+for(r3=0;r3<15;r3++);
+eclk=1;
+for(r3=0;r3<15;r3++);
+eclk=0;
+for(r3=0;r3<15;r3++);
+
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom bitin routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+bitin()
+{
+eemem=eemem|0x80;
+tdat=1;
+eclk=1;
+for(r3=0;r3<15;r3++);
+if(edat!=1)
+eemem=eemem&0x7f;
+eclk=0;
+for(r3=0;r3<15;r3++);
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom tx routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+tx()
+{
+count=0;
+while(count<8)
+{
+eemem=eemem&0xbf;
+buff=txbuf&0x80;
+if(buff==0x80)
+eemem=eemem|0x40;
+bitout();
+txbuf=txbuf<<1;
+count++;
+}
+bitin();
+}
+
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							eeprom rx routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+rx()
+{
+datai=0;
+count=0;
+while(count<8)
+{
+datai=datai<<1;
+bitin();
+buff=eemem&0x80;
+if(buff==0x80)
+datai=datai|0x01;
+count++;
+}
+}
+
+keyatod()
+{
+
+ADCON1=0X80;
+//for(j=0;j<72;j++);
+
+result=0;
+for(doad=0;doad<5;doad++)
+{
+ADCON0=0X0D;
+//for(j=0;j<12;j++);
+GODONE=1;
+
+while(GODONE);
+result1=ADRESH;
+result1=result1<<8;
+result1=result1+ADRESL;
+if(result1>result)
+result=result1;
+}
+
+
+if((result>273)&&(result<373))//set/run
+{
+setruntime++;
+menutime=0;
+inctime=0;
+sidetime=0;
+if(setruntime>1)
+{
+setrun=1;
+menukey=0;
+sidekey=0;
+inckey=0;
+
+}
+}
+
+if((result>142)&&(result<242))//inc key
+{
+setruntime=0;
+menutime=0;
+sidetime=0;
+inctime++;
+if((inctime>1)&&(automan==1))
+{
+menukey=0;
+sidekey=0;
+inckey=1;
+setrun=0;
+}
+if((inctime>100)&&(automan==0))
+{
+timerhigh=0;
+TMR0=0;
+proximitycount=0;
+//address=8;
+//dualwrite();
+count_save=0;
+tempfaultflag=0;
+countfaultflag=0;
+//	faultime=fault_time;
+//	faultflag=0;
+//
+}
+}
+
+if((result>50)&&(result<130))//sidekey
+{
+setruntime=0;
+menutime=0;
+sidetime++;
+inctime=0;
+if(sidetime>1)
+{
+setrun=0;
+menukey=0;
+sidekey=1;
+inckey=0;
+}
+}
+
+
+if((result>365)&&(result<465))//menukey
+{
+setruntime=0;
+menutime++;
+sidetime=0;
+inctime=0;
+if(menutime>1)
+{
+setruntime=0;
+menukey=1;
+sidekey=0;
+inckey=0;
+}
+}
+
+/*if(inckey==1)
+{
+timerhigh=0;
+TMR0=0;
+proximitycount=0;
+//address=8;
+//dualwrite();
+
+tempfaultflag=0;
+countfaultflag=0;
+//	faultime=fault_time;
+//	faultflag=0;
+//	faultrun=0;
+}*/
+
+if(result>500)
+{
+setruntime=0;
+menukey=0;
+sidekey=0;
+inckey=0;
+setrun=0;
+menutime=0;
+sidetime=0;
+inctime=0;
+}
+
+
+//for(j=0;j<72;j++);
+
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    valuewrite routine (To display in screen at real time after split the dbuf is given here) & display of each digit occurs here.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+valuewrite()
+{
+chip=1;
+
+if(menu==0 || menu==1)
+{
+for(ibm=1;ibm<4;ibm++)
+{
+temp=dbuf[ibm];
+enabler(temp);
+delay(0x01);
+}
+//enabler(':');
+
+
+}
+
+/*if(menu==5)
+{
+    for(ibm=1;ibm<4;ibm++)
+    {
+    temp=dbuf[ibm];
+    enabler(temp);
+    delay(0x01);
+
+    }
+}
+if(menu==6 || menu==7)
+{
+    for(ibm=1;ibm<3;ibm++)
+    {
+    temp=dbuf[ibm];
+    enabler(temp);
+    delay(0x01);
+    }
+}
+
+*/
+}
+
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							increment routine
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+incrout()
+{
+keyatod();
+if(!inckey)
+ipress=0;
+
+if(inckey&&chang==1&&ipress==0)
+	{
+	delay1(1);
+		if(inckey)
+		{
+		ipress=1;
+		digit1[cblink]++;
+		datachang=1;
+		/*if(menu==0)//Selecting RTC/Trigger mode.
+		{
+		//vcheck();
+		aman=!aman;
+            display2();
+		sewrite(1,aman);
+
+		}
+        if(menu==8)//Speed.
+		{
+		if(digit1[cblink]>3)
+		digit1[cblink]=1;
+		speed=digit1[cblink];
+        display2();
+       
+		sewrite(16,speed);
+		}*/
+
+
+
+
+	
+
+	/*	if(menu==9)
+		{
+			if(digit1[1]>2)
+		digit1[1]=0;
+		if(digit1[3]>5)
+		digit1[3]=0;
+
+		}*/
+/********************************************************************************************/
+		
+		if(digit1[cblink]>=10)
+		digit1[cblink]=0;
+		disdat=digit1[cblink]+0x30;
+		chip=0;
+	
+		if(menu==0|| menu==1)
+		{	
+		cursor=0xcc+blink;//Selecting the 10th position to blink.
+		enabler(cursor);
+		delay(10);
+		chip=1;
+		enabler(disdat);
+		delay(10);
+		chip=0;
+		enabler(cursor);
+		delay(10);
+		enabler(0x0d);
+		delay1(1);
+		}
+		}
+	}
+}
+
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											data combine routine & storing data in buffer
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+combin()
+{
+ //if(menu==0||menu==1)  
+ {
+    buffer=digit1[1]*100+digit1[2]*10+digit1[3];//If datachange occurs buffer is storing the value,For 3-digit(Trigger timer).
+ }
+
+}
+
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							digit select routine
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+digitsel()
+{
+keyatod();
+if(!sidekey)
+spress=0;
+if(sidekey&&spress==0)//||(smenu==6||smenu==7||smenu==8))
+	{
+    if(menu!=8)
+        menu_change=0;
+ 
+	delay1(1);
+	if(sidekey)
+		{
+		blink++;
+		cblink++;
+		spress=1;
+/*
+        if(blink==3 && menu!=5 && menu!=6 && menu!=7)
+           blink++;
+		if((menu>=0)&&blink==6)
+		{
+            
+		blink=1;
+		cblink=1;
+		}
+        if(menu==5&&blink==4)
+        {
+            blink = 1;
+            cblink=1;
+        }
+		*/
+        if(blink==4)
+        {       
+            blink=1;
+            cblink=1;
+        }
+        
+        chang=1;
+        if(menu!=8)
+        {
+		chip=0;
+		cursor=0xcc+blink;
+		enabler(cursor);
+		delay(10);
+		enabler(0x0d);
+		delay(10);
+		chip=1;
+		delay1(1);
+        }	
+        }
+	}
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    setmode data split routine & after EEPRom read the stored data in datai is given back to respective variables and finaly back to buffer.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+split1()
+{
+   
+       if(menu==0)
+ buffer=temp_max; 
+     if(menu==1)
+ buffer=count_limit; 
+
+   /*    if(menu==4)
+ buffer=rtz2f_timer;
+if(menu==5)
+buffer=trig_timer;
+if(menu==6)
+buffer=fault_time;
+if(menu==7)
+buffer=park_time;
+if(menu==8)
+buffer=speed;
+
+if(menu==9)
+buffer=rtc_time;
+if(mainscreen==1)
+{
+triggertimertemp=(trig_timer-offtimcount);
+buffer=triggertimertemp;
+if(triggertimertemp<=0)
+buffer=0;
+
+}*/
+
+
+split();
+
+/*if(menu==5||mainscreen==1)
+{
+    digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+    digit1[2]=dbuf[2]-0x30;//converting back int to char.
+    digit1[3]=dbuf[3]-0x30;
+
+
+}else if(menu==6||menu==7)
+{
+
+digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+    digit1[2]=dbuf[2]-0x30;
+
+}else
+*/
+
+if(menu==0||menu==1){
+
+digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+digit1[2]=dbuf[2]-0x30;//converting back int to char.
+digit1[3]=dbuf[3]-0x30;
+//if(smenu==7)
+digit1[4]=dbuf[4]-0x30;
+}
+}
+
+split()
+{
+
+/*************************Saving 4-digits to dbuf array***********************************************/
+   // if(menu>=0){
+dbuf[1]=(buffer/1000)+0x30;//Converting char to int.
+buffer=buffer%1000;
+dbuf[2]=(buffer/100)+0x30;
+buffer=buffer%100;
+dbuf[3]=(buffer/10)+0x30;
+dbuf[4]=(buffer%10)+0x30;
+
+
+
+dbuf[1]=dbuf[2];
+dbuf[2]=dbuf[3];
+dbuf[3]=dbuf[4];
+dbuf[4]=nu;
+  //  }
+    
+ /*   if(menu==6||menu==7)
+    {
+        dbuf[1]=(buffer/10)+0x30;//Converting char to int.
+       
+        dbuf[2]=(buffer%10)+0x30;
+       
+    }
+    if(menu==5||mainscreen==1)
+    {
+        dbuf[1]=(buffer/100)+0x30;//Converting char to int.
+         buffer=buffer%100;
+        dbuf[2]=(buffer/10)+0x30;
+        dbuf[3]=(buffer%10)+0x30;
+    }*/
+}
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							setmode keyscan routine && data writing to EEprom
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+keyscan()/************EEPROM writing occurs here after menu selection*****************/
+{
+keyatod();
+if(!menukey)
+mpress=0;
+if(menukey&&mpress==0)
+{
+delay1(1);
+if(menukey&&mpress==0)
+{
+mpress=1;
+if(datachang==1)
+{
+combin();//Storing data in buffer.
+
+
+if(menu==0)//Temperature max.
+{
+temp_max=buffer;
+tempmax=temp_max;
+address=4;
+dualwrite();
+}
+if(menu==1)//count limit.
+{
+count_limit=buffer;
+countlimit=count_limit;
+address=6;
+dualwrite();
+}
+}
+//
+cblink=0;
+blink=0;
+
+   
+menu_change=1;
+chang=0;
+datachang=0;
+digit1[1]=0;
+digit1[2]=0;
+digit1[3]=0;
+digit1[4]=0;
+//clearinglog=0;
+menu++;//For selecting menu options. 
+if(menu>1)//Decides number of menu options
+menu=0;
+
+display2();
+}
+
+
+/*if(menu==0){
+blink=0;
+cblink=0;
+chang=1;
+} */   
+
+}
+incrout();
+digitsel();
+}
+/*------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+												 interrupt routine
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+static void interrupt isr()
+{
+keyatod();
+if(TMR1IF==1)//10msec
+{
+
+if(T0IF==1)
+{
+timerhigh++;
+T0IF=0;
+}
+
+    TMR1H=0XE7;
+    TMR1L=0X95;
+//TMR1=0XE795;
+//fwd=!fwd;    
+msec++;
+
+	if(msec>100)
+	{
+		msec=0;
+		displaycount++;
+	}
+TMR1IF=0;
+/*
+#asm("opt asmopt_on");
+nop();
+#nop();
+#asm("clrwdt");
+nop();
+nop();
+#asm("opt asmopt_off");
+*/
+#asm
+nop
+nop
+clrwdt
+nop
+#endasm
+
+
+/****************************************SET/RUN MODE******************************************************/
+      
+if(setrun==0)//SET/RUN press.
+{
+ swactive=0;
+ swrelease=0;
+}
+
+if(setrun==1&&swrelease==0)//SET/RUN, when pressed becomes==0 and to enter swrelease==0.
+{
+ swactive++;
+ if(swactive>300)//3sec
+ {
+  swrelease=1;//To exit to \() for running the loop after change of state of automan, swrelease state is changed.
+  swactive=0;
+  automan=!automan;//Here the change of state of setting or running mode occurs
+ } 
+}
+
+}
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							i/o, peripheral init routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+init()
+{
+ offtimerflag=0,rtcdispflag=0, dispsecflag=1,dispfirstflag=1,countflag=0,trigOk=0,cleancycle=0,timeok=0,trigover=0;
+menukey=0,sidekey=0,inckey=0,setrun=0;
+automan=0,swrelease=0,datachang=0,chang=0,mpress=0,spress=0,ipress=0;
+
+
+
+TRISA=0X1B;//RA0
+TRISB=0X00;
+TRISC=0X00;
+TRISD=0X04;
+TRISE=0X00;
+PORTA=0X00;
+PORTB=0;
+PORTC=0;
+PORTD=0;
+ANSEL=0X08;//0x2f
+ANSELH=0X10;
+ADCON1=0X80;
+ADCON0 = 0X45;
+OPTION = 0x28;
+TMR0=0;
+/***************************Interrupt initialization***********************************/
+INTCON=0XC0;
+TMR1IE=1;
+TMR1IF=0;
+WPUB=0;
+IOCB=0;
+TMR1H=0XE7;
+TMR1L=0X95;
+//TMR1=0XE795;
+T1CON=0X31;
+PIE1=0X01;
+//PR2=195;
+//TMR2IE=1;
+/*********************************************************************************************/
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							Display routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+							set mode display routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+display2()/************Only display function according to the conditions***************/
+{
+fline();
+chip=1;
+for(t3=0;t3<16;t3++)
+{
+temp=fline1[t3];//SET mode
+enabler(temp);
+delay(1);
+}
+/**************************************MENU SELECTION***********************************************/
+sline();
+for(t3=0;t3<16;t3++)
+{
+if(menu==0)//Temperature max display.
+temp=temp_maximum[t3];
+if(menu==1)//Count limit display.
+temp=count_limits[t3];
+enabler(temp);
+delay(5);
+}
+/***********************Digits displaying**************************************************/
+//if(menu==0||menu==1||menu==2)
+//{
+split1();
+chip=0;
+enabler(0xcd);//Second line 10th position
+delay(0x01);
+valuewrite();
+//}
+chip=0;
+enabler(0x0c);
+delay(0x01);
+}
+//////////////////////////////TEMPERATURE/////////////////////////////
+
+void tempScan(void)
+{
+		GIE=0;
+		//Temperature - 1
+		ADCON0 = 0x45;
+		delay(14);
+		tempResult = adcScan();
+		tempResistance = 10000 * (tempResult/(1023.0 - tempResult));
+
+		//formula T =  1/(1/T0 + 1/B*ln(R/R0)) ; R - resistance of temperature sensor
+		// 1/T0 = 1/298.15 = 0.00315; B = 3950;R0 = 10000; T in celcius = T - 273.15
+		//converting from kelvin to celsious,so subtracting with 273.15
+		temperature1 = (1/(0.00335 + ((1/3950.0)*log(tempResistance/10000))) - 273.15);
+
+		if(temperature1 >= 190)//If thermistor is not present
+		{
+			temperature1 = 0;
+		}
+		GIE=1;
+}
+
+
+
+int adcScan(void)
+{
+	tempResultAverage  = 0;
+	for(iterator = 0; iterator<400; iterator++)
+	{
+		GODONE = 1;
+		while(GODONE);
+		adcResult = ((ADRESH<<8)|(ADRESL));
+		tempResultAverage  += adcResult;
+		adcResult = 0;
+	}
+	return (tempResultAverage/400);
+}
+/*****************************************Main Display*****************************************************/
+display()
+{
+
+fline();
+for(t3=0;t3<16;t3++)
+{
+chip=1;
+temp=temperaturestring[t3];//Live Temperature
+enabler(temp);
+delay(1);
+}
+
+sline();
+for(t3=0;t3<16;t3++)
+{
+chip=1;
+temp=proximitystring[t3];//Live Count.
+ 
+enabler(temp);
+delay(5);
+
+}
+
+
+chip=0;
+enabler(0x0c);
+delay(0x01);
+}
+
+void tempandptywrite(void)
+{
+	chip=0;
+	enabler(0x88);
+	delay(5);
+
+	chip=1;
+	enabler((temperature1/100)+0x30);
+	delay(2);
+	
+	enabler(((temperature1%100)/10)+0x30);
+	delay(2);
+
+	enabler((temperature1%10)+0x30);
+	delay(2);
+
+
+	chip=0;
+	enabler(0xc8);
+	delay(1);
+
+	chip=1;
+	enabler((count_save/100)+0x30);
+	delay(1);
+	
+	enabler(((count_save%100)/10)+0x30);
+	delay(1);
+
+	enabler((count_save%10)+0x30);
+	delay(1);
+
+chip=0;
+enabler(0x0c);
+delay(0x01);
+
+
+}
+
