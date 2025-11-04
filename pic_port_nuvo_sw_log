@@ -3,13 +3,13 @@
 /*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 							i/o init routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-#define 	voltup  	  P14//triac 1-output mode
-#define 	voltdn  	  P13//triac2 -output mode
-#define 	cutoff  	  P11//internal relay output mode
-#define   extcutoff   P12//external relay output mode
+//#define 	voltup  	  P14//triac 1-output mode
+//#define 	voltdn  	  P13//triac2 -output mode
+//#define 	cutoff  	  P11//internal relay output mode
+//#define   extcutoff   P12//external relay output mode
 #define   CARRY CY
 
-#define		  buzzer	        P35
+//#define		  buzzer	        P35
 /*#define     ipredled        P15//RA1
 #define     ipgreenled      P15//RC3
 #define     rgbredled       P15//RC6
@@ -18,14 +18,14 @@
 #define 	chip  	P10
 #define 	enab 		P33
 #define   ddata    P16
-
-bit BIT_TMP;  
-
 sbit dclock=P2^1;
+sbit PROXIMITY_SENSOR = P1^1;
+
 //#define    ENABLE1_ADC_CH10       P22_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0A;AINDIDS1=0;AINDIDS1|=0x04;ADCCON1|=0x31;//input section
 //#define    ENABLE1_ADC_CH11       P23_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0B;AINDIDS1=0;AINDIDS1|=0x08;ADCCON1|=0x31;//output section
-//#define    ENABLE1_ADC_CH12       P24_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0C;AINDIDS1=0;AINDIDS1|=0x10;ADCCON1|=0x31;//CT section
-//#define    ENABLE1_ADC_CH15       P25_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0F;AINDIDS1=0;AINDIDS1|=0x80;ADCCON1|=0x31;//switch
+#define    ENABLE1_ADC_CH12       P24_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0C;AINDIDS1=0;AINDIDS1|=0x10;ADCCON1|=0x31;//CT section
+#define    ADC_CHANNEL_12  12   // P2.4 = ADC12
+#define    ENABLE1_ADC_CH15       P25_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0F;AINDIDS1=0;AINDIDS1|=0x80;ADCCON1|=0x31;//switch
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 							lookup table routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -70,35 +70,37 @@ sbit dclock=P2^1;
 #define dc '2'
 #define dd '3'
 #define de '5'
+#define di '6'
 #define df '7'
+#define dg '8'
 #define dp '.'
 
-	#define sa 'a'
-	#define sb 'b'
-	#define sc 'c'
-	#define sd 'd'
-	#define se 'e'
-	#define sf 'f'
-	#define sg 'g'
-	#define sh 'h'
-	#define si 'i'
-	#define sj 'j'
-	#define sk 'k'
-	#define sl 'l'
-	#define sm 'm'
-	#define sn 'n' 
-	#define so 'o'
-	#define sp 'p' 
-	#define sq 'q'
-	#define sr 'r'
-	#define ss 's'
-	#define st 't'
-	#define su 'u'
-	#define sv 'v' 
-	#define sw 'w'
-	#define sx 'x' 
-	#define sy 'y'
-	#define sz 'z'
+#define sa 'a'
+#define sb 'b'
+#define sc 'c'
+#define sd 'd'
+#define se 'e'
+#define sf 'f'
+#define sg 'g'
+#define sh 'h'
+#define si 'i'
+#define sj 'j'
+#define sk 'k'
+#define sl 'l'
+#define sm 'm'
+#define sn 'n' 
+#define so 'o'
+#define sp 'p' 
+#define sq 'q'
+#define sr 'r'
+#define ss 's'
+#define st 't'
+#define su 'u'
+#define sv 'v' 
+#define sw 'w'
+#define sx 'x' 
+#define sy 'y'
+#define sz 'z'
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 							lcd initialisation values routine
@@ -106,184 +108,330 @@ sbit dclock=P2^1;
 xdata const char init2[]={0x38,0xa0,0x38,0x0a,0x08,0x0a,0x01,0x0a,0x06,0x0a,0x0f,0x0a,0x80,0x0a,0x01,0x0a};
 //const char init2[]={0x38,0x0a,0x38,0x01,0x08,0x01,0x01,0x05,0x06,0x01,0x0f,0x01,0x80,0x01,0x01,0x00};
 
-xdata const char fline1[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};
-xdata const char sen[]=		{cs,se,sn,ss,si,st,sy,nu,':',nu,nu,nu,nu,nu,cv,nu};
-xdata const char svt[]=		{cs,se,st,nu,cv,so,sl,st,':',nu,nu,nu,nu,nu,cv,nu};
-xdata const char ohc[]=		{nu,co,'/',cp,nu,ch,cv,nu,':',nu,nu,nu,nu,nu,cv,nu};
-xdata const char ovl[]=		{co,sv,se,sr,sl,so,sa,sd,':',nu,nu,nu,nu,nu,ca,nu};
-xdata const char ctfs[]=		{cc,ct,nu,cf,sa,sc,st,sr,':',nu,nu,nu,nu,nu,nu,nu};
+/*******************************Main display***************************************************/
+xdata const char temperaturestring[]= {ct,cm,cp,':',nu,nu,cc,nu,cv,':',nu,nu,nu,sm,sm,ss};
+xdata const char proximitystring[]=   {ch,cr,cs,':',nu,nu,nu,nu,cl,cv,cl,':',nu,nu,nu,'%'};
+xdata const char temp_maximum[] = { nu, cm, ca, cx, hi, ct, ce, cm, cp, ac, nu, nu, nu, cc, nu, nu};
+xdata const char oil_lowlvl[] = { co, ci, cl, nu, cl, co, cw, hi, cl, cv, cl, ac, nu, nu, nu, '%' };
+xdata const char max_vib[] = { cm, ca, cx, hi, cv, ci, cb, ac, nu, nu, nu, nu, sm, sm, ha, ss };
+xdata const char run_time[] = { nu, cr, cu, cn, hi, ct, ci, cm, ce, ac, nu, nu, nu, nu, nu, nu };
 
-//const char olt[]=		{co,cv,cl,nu,ct,si,sm,se,':',nu,nu,nu,nu,nu,cs,nu};
-xdata const char vcut[]=		{cv,sc,su,st,nu,ct,si,sm,se,':',nu,nu,nu,nu,cs,nu};
-xdata const char auton[]=		{co,sn,nu,cd,se,sl,sa,sy,':',nu,nu,nu,nu,nu,cs,nu};
+xdata const char machine_status[] = { nu, cm, ca, cc, ch, ci, cn, ce, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char machine_line2[] = { ch, ac, nu, nu, nu, nu, nu, cv, ac, nu, nu, nu, sm, sm, ha, ss };
+xdata const char coolant_status[] = { nu, cc, co, co, cl, ca, cn, ct, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char coolant_line2[] = { ct, cm, cp, ac, nu, nu, cc, nu, cl, cv, cl, ac, nu, nu, nu, '%'};
+
+xdata const char cusname[]=	    {nu,nu,cl,sa,sk,ss,sh,sm,si,nu,cc,sa,sr,sd,nu,nu};//Cus
+xdata const char cusnum[]=		{nu,nu,nu,'9','8','4','3','9','3','3','8','0','8',nu,nu,nu};
+xdata const char modd0[]=          {cr,ct,cc,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+xdata const char modd1[]=          {ct,cr,cg,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+xdata const char frwd[]=           {cf,cw,cd,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+xdata const char rrev[]=           {cr,ce,cv,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+xdata const char fault[]=          {cf,ca,cu,cl,ct,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+xdata const char parkk[]=          {cp,ca,cr,ck,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+xdata const char eoc[]=			{ce,co,cc,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+xdata const char eoc1[]=			{ce,co,cc,nu,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
 
 
-xdata const char mod1[]=		{nu,nu,nu,cm,so,sd,se,':',cm,sa,sn,su,sa,sl,nu,nu}; //-2manual
-xdata const char mod []=		{nu,nu,nu,cm,so,sd,se,':',ca,su,st,so,nu,nu,nu,nu}; // 1-auto
-xdata const char rmod[]=      {cr,se,sl,sa,sy,':',nu,ci,sn,st,se,sr,sn,sa,sl,nu}; //1-internal
-//const char rmod1[]=     {cr,se,sl,sa,sy,':',nu,ce,sx,st,se,sr,sn,sa,sl,nu}; //2-external
+xdata const char rt1n[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,db,':',co,cn,nu};
+xdata const char rt1f[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,db,':',co,cf,cf};
+xdata const char rt2n[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,dc,':',co,cn,nu};
+xdata const char rt2f[]=          {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,ct,dc,':',co,cf,cf};
+xdata const char tmrtrg[]=       {nu,nu,nu,nu,nu,nu,nu,co,cf,ct,'-',nu,nu,nu,nu,nu};
 
-xdata const char calibx[]=		{cp,cr,ce,cs,nu,cs,ct,co,cp,nu,st,so,nu,cc,sa,sl,nu};
+/************************Settings display*********************************************************/
+xdata const char fline1[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};//Set mode
 
-xdata const char iocal[]=		{nu,co,'/',cp,nu,cc,sa,cl,ac,nu,nu,nu,nu,nu,cv,nu};
+xdata const char mod1[]=		{nu,nu,cm,so,sd,se,':',cr,ct,cc,nu,nu,nu,nu,nu,nu};//Mode:RTC
+xdata const char mod2[]=		{nu,nu,cm,so,sd,se,':',ct,cr,ci,cg,cg,ce,cr,nu,nu};//Mode:TRIGGER
 
+xdata const char ten[]=		{cr,cu,cn,ct,si,sm,se,'(',cm,')',':',nu,nu,nu,nu,nu};//RUNTime(M):
+xdata const char rt1[]=		{ct,db,co,cn,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T1ON(H:M)-
+xdata const char rt2[]=		{ct,db,co,cf,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T1OF(H:M)-
+xdata const char rt3[]=		{ct,dc,co,cn,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T2ON(H:M)-
+xdata const char rt4[]=		{ct,dc,co,cf,'(',ch,':',cm,')','-',nu,nu,nu,nu,nu,nu};//T2OF(H:M)-
+xdata const char flt[]=		{cf,cl,ct,cs,cn,cs,ce,'(',cs,')',':',nu,nu,nu,nu,nu};//FLTSNSE(s):
+xdata const char prk[]=		{cp,cr,ck,ct,ci,cm,ce,'(',cs,')',':',nu,nu,nu,nu,nu};//PRKTIME(s):
+xdata const char spd1[]=		{cm,so,st,so,sr,nu,'%',nu,':',de,da,nu,nu,nu,nu,nu};//Motor % :30
+xdata const char spd2[]=		{cm,so,st,so,sr,nu,'%',nu,':',di,de,nu,nu,nu,nu,nu};//Motor % :50
+xdata const char spd3[]=		{cm,so,st,so,sr,nu,'%',nu,':',dg,da,nu,nu,nu,nu,nu};//Motor % :75
+xdata const char spd4[]=		{cm,so,st,so,sr,nu,'%',nu,':',db,da,da,nu,nu,nu,nu};//Motor % :100
+xdata const char rtc[]=		{cr,ct,cc,'(',ch,':',cm,')',nu,'-',nu,nu,nu,nu,nu,nu};//RTC(H:M) -
+xdata const char home[] = 	{ch,co,cm,ce,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
+xdata const char trighome[] =  {ch,co,cm,ce,nu,nu,nu,nu,nu,co,cf,ct,':',nu,nu,nu};
+xdata const char space[] = {nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu,nu};
 
+xdata char automan=0,swrelease=0,datachang=0,chang=0,mpress=0,spress=0,ipress=0;
+xdata char menukey=0,sidekey=0,inckey=0,setrun=0;
+xdata char fwdflag;
 
+xdata char hr=0,sec=0,hour=0,minute=0,initialsense=0,date=0,month=0,year=0,buf1=0,buf2=0,date1=0,mont1=0,hou1=0,minut1=0,msec=0;
+xdata char eemem=0,txbuf=0,datai=0,buff=0,ibm=0,phsp=0,dbuf[5],aman=0,speed=2,speed_flag=0,disdat=0,cursor=0,clearinglog=0,i=0;
+xdata char count=0,menu=0,blink=0,cblink=0,digit1[5],smenu=0,sensi=0,menu_change=0;
+xdata char h=0,menu1=0,t1n=0,t1f=0,t2n=0,t2f=0,oft=0,park=0;
+xdata char j=0,a=0,b=0,c=0,d=0,k=0;
+xdata char address=0,lmenu=0,adcome=0;
+xdata char setruntime=0,sidetime=0,inctime=0,menutime=0;
+xdata unsigned char switchpress=0;
+xdata unsigned int temp_min=0,temp_max=0,oil_level=0,count_save=0,rtz2f_timer=0,park_time=0,fault_time=0,trig_timer=0,rtc_time=0;
+xdata unsigned int buffer=0,result=0,result1=0,parkrun=0,tempmax=0, sensetimes=0,countlimit=0;
+xdata unsigned int counter2=0,counter4=0;
+xdata unsigned int m=0,n=0,o=0,timerhigh=0;
+xdata unsigned char setswitch=0;
+xdata unsigned int duty=0,readrom=0,doad=0;
+xdata unsigned int swactive=0,pwmspeed=0;
+xdata unsigned char forwardstart=0,revstart=0;
+xdata unsigned char set_bit_check = 0;
+xdata char offtimerflag,rtcdispflag, dispsecflag,dispfirstflag,countflag,countfaultflag,tempfaultflag,trigOk,cleancycle,timeok,faultstartcheck,trigover,endtrig1;
+xdata char endofcycleflagrtc,endofcycleflagtrg,eoctrglck,eoctrgwrite,eocrtcwrite;
+
+xdata uint16_t vib_level = 0,  time_set = 0;
+xdata uint16_t temp_adc_result = 0,  sw_adc_result = 0;
+
+xdata unsigned char oneminute=0,rtcdispcount=0, secondscount=0,faultsec=0,faultcount=0,faultstartcount=0,rtcdisplaystate=0,faultime=0;
+xdata unsigned char setbit=0,endtrig=0,endcheck=0,trigcheck=0,trigruncomplete=0,mainscreen=0,rtcruncomplete=0;
+xdata unsigned int triggertimertemp=0,offtimcount=0,trigsec=0, endsec=0,rtcnow=0,futuretime=0,presenttime=0,runningtime=0,rtz1n=0,rtz1f=0,rtz2n=0,rtz2f=0,trigtime=0;
+/////////////////////////////proximity.//////////////////////////////////////
+//xdata startproximitycountflag=0;
+xdata unsigned int switchset=0,switchset2=0,switchset1=0;
+
+xdata unsigned rotationcount=0;
+//------Temperature----------------------------------------------------------------/
+xdata unsigned int tempResult = 0, adcResult = 0;
+xdata unsigned long tempResultAverage = 0;
+unsigned char temperature1 = 0;
+double tempResistance = 0;
+unsigned int counttime=0,counter=0;
+unsigned int iterator = 0;
+unsigned char highTemp = 0;
+unsigned int displaycount=0;
+void tempScan(void);
+int adcScan_temp(void);
+unsigned char timervalue=0;
+bit current_state = 0;
+bit last_state = 0;
+xdata int pr_count= 0;
+xdata char screen_page = 0; // stay in page 1 initially after welcome message
+/*clock*/
+bit BIT_TMP; 
 /*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    variable declaration routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 volatile unsigned char xdata page_buffer[128];
 unsigned char rdata;
-xdata char i=0,k=0,zerodetect=0,lmenu=0,etype=0,errortime=0,eaddr=0,erase=0,reportzero=0;
-xdata char smenu=0,h=0,amanpress=0,address=0,sensi=0;
-xdata char loop=0,lcome=0,reg=0,reg7=0,r3=0,ibm=0,temp=0,dbuf[7],digit1[7],icome=0;
-xdata unsigned char calpress=0,inccome=0,errortime1=0,msec=0,sec=0,startpress=0,stoppress=0,menupress=0;
-xdata unsigned char count=0,r3x=0,count1=0,highbyte=0,lowbyte=0,channel=0,initialenter=0,x=0;
-
-
-xdata unsigned int ovltimes=0,ivolt=0,ovolt=0,buffer=0,doad=0,current=0,evalue=0,countx=0,m=0;
-xdata unsigned int rlycutter=0,buffer1=0,bufferx=0,result3=0,result2=0,swactive=0,readrom=0,v_cal=0,cuttime1=0,ontime1=0,cutoffcount=0,cutoffcount1=0,fres=0,frequency=0,result1=0;
-xdata unsigned long resultx=0,fresx=0,resulty=0,resulta=0,result=0,original=0;
+//xdata char zerodetect=0,etype=0,errortime=0,eaddr=0,erase=0,reportzero=0;
+xdata unsigned int counter3=0, counter1=0, counttime2=0;
+xdata unsigned int counttime4=0,counttime1=0,switchdisp=0;
+xdata unsigned char display_lcd[4];
+xdata char amanpress=0;
+xdata char loop=0,lcome=0,reg=0,reg7=0,temp=0,icome=0,t3=0;
+volatile unsigned int r1, r2, r3;
+xdata unsigned char calpress=0,errortime1=0,startpress=0,stoppress=0,menupress=0;
+xdata unsigned char r3x=0,count1=0,highbyte=0,lowbyte=0,channel=0,initialenter=0,x=0;
+xdata unsigned char waitset=0;
+xdata unsigned char sw2 = 0,sw1=0;
+//xdata unsigned int ovltimes=0,ivolt=0,current=0,evalue=0,countx=0;
+xdata unsigned int rlycutter=0,buffer1=0,bufferx=0,result3=0,result2=0,v_cal=0,cuttime1=0,ontime1=0,cutoffcount=0,cutoffcount1=0,fres=0,frequency=0;
+xdata unsigned long resultx=0,resultx2=0,fresx=0,resulty=0,resulta=0,original=0;
 xdata unsigned int settings[32],intref=0,ovoltbufx=0,intref1=0,fscan=0,qsec=0;
 xdata unsigned int freq1=0,loop2=0,income2=0,ledcount=0;
-xdata signed int fcompensate=0;
-xdata double resultx1=0,resultxy2=0;
-
+//xdata signed int fcompensate=0;
+//xdata double resultx1=0,resultxy2=0;
+xdata unsigned char setreset=0,check=0,decrement=0;
+xdata unsigned char scan=0;
 xdata char iplowled=0,iphighled=0,oplowled=0,ophighled=0,cutoffled=0,outputon=0,ovlled=0,resetted=0,voltprob=0;
-xdata unsigned char writ=0,spress=0,startkey=0,automansw=0,ovlreset=0,stopkey=0,menukey=0,testkey=0,mpress=0,automan=0,manualreset=0;
-xdata char swrelease=0,qmax=0,calib=0,nokey=0;
+xdata unsigned char writ=0,automansw=0,ovlreset=0,stopkey=0,testkey=0,manualreset=0;
+xdata char qmax=0,calib=0,nokey=0,tens=0;
+xdata unsigned int dec=0;
+xdata unsigned char memsave=0,memsave1=0;
+//xdata unsigned int counttime4=0,counttime1=0,switchdisp=0;
+unsigned char DP=0;
+
 void set_clock_source(void);
 void set_clock_division_factor(unsigned char value);
 void init(void);
 void portinit(void);
-void enabler(char t4)	;
+void enabler(char t4);
 void delay(char gg);
 void timer_init(void);
 void lcdinit(void);
 void splitl(void);
+void split(void);
+void switchscan1(void);
+void tempandptywrite(void);
 void valuewrite(void);
 void adrcal(void);
+void adcal_temp(void);
+void adcal_switch(void);
 void valuewritex(void);
 void adcal(void);
 void adc_init(void);
+void combin(void);
 void adcal1(void);
+void switchscan(void);
 void atodconv(void);
 void involtscan(void);
 void zccheck(void);
 void keyatod(void);
+void setconversion(void);
+void setmode(void);
 void mdiv(void);
-void voltcal(void);
-void docal(void);
+//void voltcal(void);
+//void docal(void);
+void display(void);
 void display2(void);
 void sline(void);
 void fline(void);
 void trmsadc(void);
 void mult(void);
-void incdecmode(void);
-void outvoltscan(void);
-void divcommon(void);
-void errorframe(void);
-void outloadscan(void);
-void lfreq(void);
-void editmode(void);
+void delay1(int t8);
+void incrout(void);
+void keyscan(void);
 void dataread(void);
 void FlashWrite(void);
 unsigned char Read_APROM_BYTE(unsigned int code *u16_addr);
 void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData);
 void main()
 {
-	init();
-	delay(100);
-	lcdinit();
-cutoffled=1;
-dataread(); 
-	reportzero=1;
-	for(ovltimes=0;ovltimes<10;ovltimes++)
-  keyatod();
-ovltimes=0;
-reportzero=0;
-fscan=759;
-frequency=500;
-channel=0x0c;//ct
-atodconv();
-intref=result;
-automansw=0;
-//errortime=99;*/
-timer_init();
-	while(1)
-	{
-lmenu=0;
-lfreq();
-while(!automansw)
-{ 
-ovoltbufx=0;
-for(i=0;i<20;i++)//
-{
-outvoltscan();			//output voltage scanning routine
-ovoltbufx=ovolt+ovoltbufx;
+		init();
+		delay(100);
+		lcdinit();
+		automan=0;
+		while(1)
+		{
+    	  if(automan==0)
+			  {
+							chip=0;
+							enabler(0x01);
+							menu=0;
+							display();
+				}
+				while(automan==0)//Run mode.
+				{
+					  //keyscan();
+					  tempScan();
+						if(displaycount>30)
+						{
+							  screen_page=!screen_page;
+					      display();
+							  tempandptywrite();
+								displaycount=0;
+						}	
+				}
+				
+	//			channel = 0x0f;
+	//	    result = adcScan();
+	//			proximitycount = result;
+	//      proximitycount = pr_count;
+	//			   	proximitycount=timerhigh*256+TMR0;
+	//			  	proximitycount=0;
+	//		 			if(proximitycount>0){
+	//							count_save=count_save+proximitycount;
+	//							buffer=count_save;
+	//							address=10;
+	//							////dualwrite();
+	//							proximitycount=0;
+	//							timerhigh=0;
+	//							//TMR0=0;
+	//					}
+
+	//					if(count_save>=count_limit){
+	//							countfaultflag=1;
+	//					}
+	//					if(temperature1>=temp_max){
+	//							tempfaultflag=1;
+	//					}
+	//					if((temperature1<(temp_max-5))&&(tempfaultflag==0))
+	//					{
+	//							tempfaultflag=0;
+	//					}
+	//					if(countfaultflag==1){
+	//							delay1(5);
+	//							//greenled=1;
+	//							delay1(5);
+	//					}
+
+	//					if(tempfaultflag==1){
+	//							delay1(5);
+	//							//redled=1;
+	//							delay1(5);
+	//					}
+	//					if(countfaultflag==0)
+	//					//greenled=0;
+
+	//					if(tempfaultflag==0){
+	//					//redled=0;
+
+	//					}
+					
+						if(automan==1)
+						{
+							    //writ=0;
+									chip=0;
+									enabler(0x01);
+									menu=0;
+									display2();
+						}
+						while(automan==1)
+						{
+//										 sline();
+//										 enabler('K');
+								if((menu_change!=0)&&(menu1==0))
+								{
+										display2();
+										menu1=1;
+								}
+								//keyscan();
+								setmode();
+					 }
+     }
 }
-ovolt=ovoltbufx/20;
 
-// output relay is turned on then output voltage need to be displayed zero. updated on 19/10/24 only for golden.
-//if(outputon==0)
-  //  ovolt=0;
-
-involtscan();
-outloadscan();
-keyatod();
-lfreq();
-
-if(menukey==1)
-{
-    lmenu++;
-    if(lmenu>4)
-       lmenu=0;
-}   
-if((ovlled==1||iphighled==1||iplowled==1||ophighled==1||oplowled==1)&&settings[16]==1)
-              buzzer=1;
-if((ovlled==0&&iphighled==0&&iplowled==0&&ophighled==0&&oplowled==0)||settings[16]==2)
-              buzzer=0;
-
-
-valuewritex();
-if(count<5)
-  count++;
-}
-if(automansw)
-{
-    writ=0;
-    smenu=1;
-    display2();
-}
-
-while(automansw)			// to view the i/p or o/p volt
-{
-    buzzer=0;
-    voltup=0;
-    voltdn=0;
-    cutoffcount=0;
-    outputon=0;
-	   cutoff=0;
-    extcutoff=0;
-    cutoffled=1;
-    editmode();
-
-}
-if(automansw==0)
-{
-    chip=0;
-    enabler(0x01);
-     delay(2);
-    valuewritex();
-}
-	}
-}
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						   interrupt service routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void Timer_ISR (void) interrupt 16
 {
- T3CON&=~(1<<4);
+	  // keyatod(); 
+	   switchscan1();
+	   switchscan();
+	   T3CON &= ~(1 << 4);   // Clear TF3 (bit4)
+ 
+	      msec++;
+        if (msec > 100)
+        {
+            msec = 0;
+            displaycount++;
+        }
+				      
+				if(setrun==0)//SET/RUN press.
+				{
+						 swactive=0;
+						 swrelease=0;
+				}
+
+				if(setrun==1&&swrelease==0)//SET/RUN, when pressed becomes==0 and to enter swrelease==0.
+				{
+						 swactive++;
+						 if(swactive>300)//3sec
+						 {
+									swrelease=1;//To exit to \() for running the loop after change of state of automan, swrelease state is changed.
+									swactive=0;
+									automan=!automan;//Here the change of state of setting or running mode occurs
+						 } 
+				}
+				
+			  current_state = PROXIMITY_SENSOR;   // live read
+
+				if (current_state == 1 && last_state == 0)
+				{
+						pr_count++;
+						if (pr_count > 90)
+								pr_count = 0;
+				}
+
+				last_state = current_state;		
+/*
 if(ovlled==1)
 {
 	rlycutter++;
@@ -393,109 +541,136 @@ dclock=1;
 count1++;
 }
 dclock=0;
-ddata=0;
+ddata=0;*/
 }
+
 /*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											input voltage scan routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void atodconv(void)
-{
-result=0;
-for(doad=0;doad<350;doad++)
-{
-ADCCON0=channel;
-	if(automansw==0)
-for(h=0;h<35;h++);
-	if(automansw==1)
-for(h=0;h<50;h++);
-adcal();
-result=result1+result;
-}
-result=result/350;
-}
-/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-											input voltage scan routine
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void involtscan(void)
-{
-channel=0x0a;
-trmsadc();
-ivolt=resultx;
-if(automansw==0)
-{
-v_cal=settings[14];
-voltcal();
-ivolt=result;
-}
-}
+//void involtscan(void)
+//{
+//channel=0x0a;
+//trmsadc();
+//ivolt=resultx;
+//if(automansw==0)
+//{
+//v_cal=settings[14];
+//voltcal();
+//ivolt=result;
+//}
+//}
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+//----------------------------------------------------
+// ADC Initialization
+//----------------------------------------------------
 void adc_init(void)
 {
-	SFRS=0;
-	ADCCON0&=0x30;
-	AINDIDS1=0x9c;
-  ADCCON1|=0x31;
-	
+    P24_INPUT_MODE;
+    P25_INPUT_MODE;
+
+    SFRS = 0;
+    ADCCON1 &= 0xCF;
+    ADCCON1 |= (4 << 4);   // ADC clock = Fsys / 16
+
+    SFRS = 2;
+    ENABLE1_ADC_CH12;      // Enable analog input on P2.4 (Channel 12)
+    ENABLE1_ADC_CH15;      // Enable analog input on P2.5 (Channel 15)
+    SFRS = 0;
 }
-void adcal(void)
+
+//----------------------------------------------------
+// ADC Conversion Function (uses global 'channel')
+//----------------------------------------------------
+void adcal_temp(void)
 {
-	  clr_ADCCON0_ADCF;
-    set_ADCCON0_ADCS;                  
-    while(ADCF == 0);
-    result1=(ADCRH<<4)+(ADCRL&0x0F);
-		result1=result1>>2;
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x0C;       // Select current channel (0x0C or 0x0F)
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    temp_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    temp_adc_result = temp_adc_result >> 2;                    // Convert to 10-bit
 }
-void adcal1(void)
+
+void adcal_switch(void)
 {
-ADCCON0=channel;
-adcal();
-intref1=intref;
-	
-if(channel!=0x0c)
-   intref1=512;
-if(result1>=intref1)
-result2=result1-intref1;
-if(result1<intref1)
-result2=intref1-result1;    
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x0F;       // Select current channel (0x0C or 0x0F)
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    sw_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    sw_adc_result = sw_adc_result >> 2;                    // Convert to 10-bit
 }
-void trmsadc(void)
+
+//----------------------------------------------------
+// ADC Scan (averaging one channel)
+//----------------------------------------------------
+int adcScan_temp(void)
 {
-resultx=0;
-zccheck();    
-for(doad=0;doad<fscan;doad++)//40100us 
-{
-ADCCON0=channel;
-for(h=0;h<35;h++);//20
-adcal1();
-if(channel==0x0c)
-{
-   if(result2<3)
-      result2=0;
-	
-}
-if(channel!=0x0c)
-{
-if(result2<7)
-   result2=0;
-}   
-result3=result2*result2;
-resultx=result3+resultx;
-}
-resultx=resultx/50;
-resultx1=resultx;
-divcommon();
-resultxy2=0;
-     while(resultx1!= resultxy2)
-     {
-     resultxy2=resultx1;
-     resultx1=resultx/resultxy2;
-     resultx1=resultx1+resultxy2;
-             divcommon();
+    tempResultAverage = 0;
+    adcResult = 0;
+    for (iterator = 0; iterator < 400; iterator++)
+    {
+        adcal_temp();                     // Perform one ADC read
+        adcResult = temp_adc_result;
+        tempResultAverage += adcResult;
     }
-     resultx=resultx1; 
+
+    return (tempResultAverage / 400); // Return averaged value
 }
+
+void tempScan(void)
+{
+		delay(14);
+	
+	  tempResult = adcScan_temp();
+	
+		tempResistance = 10000 * (tempResult/(1023.0 - tempResult));
+
+		//formula T =  1/(1/T0 + 1/B*ln(R/R0)) ; R - resistance of temperature sensor
+		// 1/T0 = 1/298.15 = 0.00315; B = 3950;R0 = 10000; T in celcius = T - 273.15
+		//converting from kelvin to celsious,so subtracting with 273.15
+		temperature1 = (1/(0.00335 + ((1/3950.0)*log(tempResistance/10000))) - 273.15);
+
+//		if(temperature1 >= 190)//If thermistor is not present
+//		{
+//			temperature1 = 0;
+//		}
+}
+//----------------------------------------------------
+// AtoD Conversion Wrapper (supports both channels)
+//----------------------------------------------------
+void atodconv(void)
+{
+    result = 0;
+
+    for (doad = 0; doad < 350; doad++)
+    {
+        // Safe channel select (don’t overwrite other bits)
+        ADCCON0 = (ADCCON0 & 0xF0) | channel;
+
+        if (automansw == 0)
+            for (h = 0; h < 35; h++);
+        if (automansw == 1)
+            for (h = 0; h < 50; h++);
+
+        adcal();
+        result = result1 + result;
+    }
+
+    result = result / 350;
+}
+
+
 void set_clock_source(void)
 {
 	set_CKEN_HIRCEN;         
@@ -506,6 +681,7 @@ void set_clock_division_factor(unsigned char value)
 {
   CKDIV = value;
 }
+
 void timer_init(void)
 {
 	T3CON=0x04;
@@ -515,6 +691,7 @@ void timer_init(void)
 	IE |=0x80;
 	T3CON|=(1<<3);
 }
+
 void portinit(void)
 {
 	dclock=0;
@@ -530,6 +707,10 @@ void portinit(void)
 	P1M1&=0x00;
 	P1M2|=0x5F;
 	P1=0x00;
+	
+	P1M1 |= 0x02;   // bit1 = 1 ? input mode
+	P1M2 &= ~0x02;  // bit1 = 0
+
 	 //mclr,led driver, in& out selection,ct& switch
 	SFRS=2;
 	P2M1|=0x3c;
@@ -543,13 +724,15 @@ void portinit(void)
 	P3M2|=0x28;
 	P3=0x00;
 }
+
 void init(void)
 {
  set_clock_source();
  portinit();
- //timer_init();
+ timer_init();
  adc_init();
 }
+
 void enabler1(char ladr,char ldata)
 {
     chip=0;
@@ -562,133 +745,236 @@ void enabler1(char ladr,char ldata)
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void valuewritex(void)
-{
-buffer=ovolt;
-splitl();
-address=0x80;
-valuewrite();
+//void valuewritex(void)
+//{
+////buffer=ovolt;
+//splitl();
+//address=0x80;
+//valuewrite();
 
-buffer=current;
-splitl();
-address=0x85;
-valuewrite();
+////buffer=current;
+//splitl();
+//address=0x85;
+//valuewrite();
 
-buffer=ivolt;
-splitl();
-address=0xc0;
-valuewrite();
-buffer=frequency;
-qmax=1;
-splitl();
-qmax=0;
-address=0x8a;
-valuewrite();
-chip=0;
-enabler(0x0c);
-
-
-enabler1(0x83,'V');
-enabler1(0x88,'A');
-enabler1(0x8e,'H');
-enabler1(0x8F,'z');
-enabler1(0xc3,'V');//C0
-enabler1(0xc4,'i');//C1
+////buffer=ivolt;
+//splitl();
+//address=0xc0;
+//valuewrite();
+//buffer=frequency;
+//qmax=1;
+//splitl();
+//qmax=0;
+//address=0x8a;
+//valuewrite();
+//chip=0;
+//enabler(0x0c);
 
 
+//enabler1(0x83,'V');
+//enabler1(0x88,'A');
+//enabler1(0x8e,'H');
+//enabler1(0x8F,'z');
+//enabler1(0xc3,'V');//C0
+//enabler1(0xc4,'i');//C1
 
-    if(settings[18]>0)
-    {
-    enabler1(0xc7,'E');
-    errortime=settings[18];
-    if(errortime>lmenu)
-    errortime=errortime-lmenu;
-    
-    
-    if(errortime<12)
-    {
-    adrcal();
-    enabler(errortime1+0x30);
-    enabler('-');
-    delay(1);
-   
-    etype=settings[eaddr];
-    evalue=settings[eaddr+1];
-    errortime=settings[18];
-    
-    if(etype==1||etype==2||etype==5)    
-    enabler('O');
-    if(etype==3||etype==4)
-    enabler('I');    
-    delay(1);
-    if(etype==1||etype==3||etype==5)
-    enabler('L');
-    if(etype==2||etype==4)
-    enabler('H');    
-    delay(1);
-    if(etype<5)
-    enabler('V');
-    if(etype==5)
-    enabler('T');    
-    delay(1);
-    
-buffer=evalue;
-splitl();
-address=0xcd;
-valuewrite();
-    }
-    } 
-    chip=0;
-   enabler(0x0c); 
-}
+
+
+//    if(settings[18]>0)
+//    {
+//    enabler1(0xc7,'E');
+////    errortime=settings[18];
+////    if(errortime>lmenu)
+////    errortime=errortime-lmenu;
+//    
+//    
+////    if(errortime<12)
+//    {
+//    adrcal();
+//    enabler(errortime1+0x30);
+//    enabler('-');
+//    delay(1);
+//   
+//  //  etype=settings[eaddr];
+////    evalue=settings[eaddr+1];
+////    errortime=settings[18];
+//    
+////    if(etype==1||etype==2||etype==5)    
+//    enabler('O');
+////    if(etype==3||etype==4)
+//    enabler('I');    
+//    delay(1);
+////    if(etype==1||etype==3||etype==5)
+//    enabler('L');
+////    if(etype==2||etype==4)
+//    enabler('H');    
+//    delay(1);
+////    if(etype<5)
+//    enabler('V');
+////    if(etype==5)
+//    enabler('T');    
+//    delay(1);
+//    
+////buffer=evalue;
+//splitl();
+//address=0xcd;
+//valuewrite();
+//    }
+//    } 
+//    chip=0;
+//   enabler(0x0c); 
+//}
+
 
 void adrcal(void)
 {
-     errortime1=errortime;
-    if(errortime>5)
-     errortime1=errortime-5;
-    eaddr=17+(errortime1*2);
+    // errortime1=errortime;
+//    if(errortime>5)
+  //   errortime1=errortime-5;
+//    eaddr=17+(errortime1*2);
 }
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void valuewrite(void)
 {
-   chip=0;
-   enabler(address);
-   delay(3);
-    chip=1;
-for(ibm=1;ibm<5;ibm++)
-{
-temp=dbuf[ibm];
-enabler(temp);
-delay(0x01);
+			chip=1;
+
+			if(menu==0||menu==1)
+			{
+					for(ibm=1;ibm<4;ibm++)
+					{
+								temp=dbuf[ibm];
+								enabler(temp);
+								delay(0x01);
+					}
+			//  enabler(':');
+			}
+			if(menu==2)
+			{
+					temp=dbuf[1];
+								enabler(temp);
+								delay(0x01);
+					enabler('.');
+					for(ibm=2;ibm<4;ibm++)
+					{
+								temp=dbuf[ibm];
+								enabler(temp);
+								delay(0x01);
+					}
+			}			
+      if(menu==3)
+			{
+					for(ibm=1;ibm<5;ibm++)
+					{
+								temp=dbuf[ibm];
+								enabler(temp);
+								delay(0x01);
+					}
+			}			
+			/*if(menu==5)
+			{
+					for(ibm=1;ibm<4;ibm++)
+					{
+					temp=dbuf[ibm];
+					enabler(temp);
+					delay(0x01);
+
+					}
+			}
+			if(menu==6 || menu==7)
+			{
+					for(ibm=1;ibm<3;ibm++)
+					{
+					temp=dbuf[ibm];
+					enabler(temp);
+					delay(0x01);
+					}
+			}
+			*/
 }
-}
+
+
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-void splitl(void)
+void split1(void)
 {
-    bufferx=buffer;
-digit1[1]=(bufferx/100);
-dbuf[1]=digit1[1]+0x30;
-bufferx=bufferx%100;
-digit1[2]=(bufferx/10);
-dbuf[2]=digit1[2]+0x30;
-digit1[3]=(bufferx%10);
-dbuf[3]=digit1[3]+0x30;
-dbuf[4]=' ';
+				if(menu==0)
+					buffer=temp_max; 
+				if(menu==1)
+					buffer=oil_level; 
+				if(menu==2)
+					buffer=vib_level;
+				if(menu==3)
+					buffer=time_set;
+
+					split();
+
+					/*if(menu==5||mainscreen==1)
+					{
+							digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+							digit1[2]=dbuf[2]-0x30;//converting back int to char.
+							digit1[3]=dbuf[3]-0x30;
 
 
-if(qmax==1)
+					}else if(menu==6||menu==7)
+					{
+
+					digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+							digit1[2]=dbuf[2]-0x30;
+
+					}else
+					*/
+
+					if(menu==0||menu==1||menu==2||menu==3){
+							digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
+							digit1[2]=dbuf[2]-0x30;//converting back int to char.
+							digit1[3]=dbuf[3]-0x30;
+							if(menu==3)
+							   digit1[4]=dbuf[4]-0x30;
+					}
+}
+
+
+void split(void)
 {
-dbuf[4]=(bufferx%10)+0x30;
-dbuf[3]='.';
+			/*************************Saving 4-digits to dbuf array***********************************************/
+		 if(menu==0||menu==1||menu==2||menu==3){
+						dbuf[1]=(buffer/1000)+0x30;//Converting char to int.
+						buffer=buffer%1000;
+						dbuf[2]=(buffer/100)+0x30;
+						buffer=buffer%100;
+						dbuf[3]=(buffer/10)+0x30;
+						dbuf[4]=(buffer%10)+0x30;
+
+						if(menu==0||menu==1||menu==2)
+						{
+								dbuf[1]=dbuf[2];
+								dbuf[2]=dbuf[3];
+								dbuf[3]=dbuf[4];
+								dbuf[4]=nu;
+						}
+						
+			}
+    
+		 /*   if(menu==6||menu==7)
+				{
+						dbuf[1]=(buffer/10)+0x30;//Converting char to int.
+					 
+						dbuf[2]=(buffer%10)+0x30;
+					 
+				}
+				if(menu==5||mainscreen==1)
+				{
+						dbuf[1]=(buffer/100)+0x30;//Converting char to int.
+						 buffer=buffer%100;
+						dbuf[2]=(buffer/10)+0x30;
+						dbuf[3]=(buffer%10)+0x30;
+				}*/
 }
-}
+
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
@@ -698,262 +984,34 @@ void lcdinit(void)
 {
 	  reg=0;
     chip=0;
-	while(reg<15)
-	{
-	reg7=init2[reg];
-	enabler(reg7);
-	reg++;
-	if(reg==14)
-	return;
-	reg7=init2[reg];
-	delay(reg7);
-	reg++;
-	}
+		while(reg<15)
+		{
+				reg7=init2[reg];
+				enabler(reg7);
+				reg++;
+				if(reg==14)
+					return;
+				reg7=init2[reg];
+				delay(reg7);
+				reg++;
+		}
 }
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 								enable routine	
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void enabler(char t4)		
 {
-//PORTB=t4;
-P0=t4;
-enab=0;
-for(r3=0;r3<100;r3++);
-enab=1;
+		//PORTB=t4;
+		P0=t4;
+		enab=0;
+		for(r3=0;r3<100;r3++);
+		enab=1;
 }
-/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-											output load current scan routine
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void outloadscan(void)
-{
-channel=0x0c;
-trmsadc();
-result=resultx;
-original=settings[7];
-	if(original>0)
-       mdiv();
-	if(original<=0)
-		result=0;
-current=result/10;
-if(current<(settings[8]-1)&&(cutoff==1||extcutoff==1))
-{
-ovlled=0;
-ovltimes=0;
-}
-if(current>settings[8])
-{
-//ovltimes++;
-ovlled=1;
-if(ovltimes>(settings[9]))
-{
-ovltimes=0;
-ovlled=1;
-outputon=0;
-cutoffled=1;
-etype=5;
-evalue=current;
-errorframe();
-cutoff=0;
- extcutoff=0;
-}
-}
-r3x&=~(1<<3);
-if(ovlled==1)
-	r3x|=(1<<3);
-}
-void errorframe(void)
-{
-   if(cutoff==1||extcutoff==1)
-    {
-errortime++;
-if(errortime>10)//
-   errortime=errortime-5;
-settings[18]=errortime;
-adrcal();
-settings[eaddr]=etype;
-settings[eaddr+1]=evalue;
- FlashWrite();
-  IE|=(1<<7);
-    }
-}
+
 void divcommon(void)
 {
-    resultx1=resultx1/2;
+//    resultx1=resultx1/2;
 }
-
-/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-											output voltage scan routine
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-						    main routine
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-void outvoltscan(void)
-{
-
-channel=0x0b;
-trmsadc();
-
-ovolt=resultx;
-
-
-if(automansw==0)
-{
-    
-v_cal=settings[13];
-voltcal();
-ovolt=result;
-
-if(stopkey==1)
-{
-delay(1);
-if(stopkey==1)
-{	
-cutoffled=1;
-outputon=0;
-cutoff=0;
-extcutoff=0;
-ovlled=0;
-manualreset=1;
-resetted=1;
-iphighled=0;
-iplowled=0;
-ophighled=0;
-oplowled=0;
-ovlled=0;
-voltprob=0;
-cutoffcount=0;
-cutoffcount1=0;
-}
-}
-if(outputon==1&&startkey==1&&voltprob==0)
-{
-    if(settings[17]==1)
-    {
-    cutoff=1;
-extcutoff=0;
-    }
-if(settings[17]==2)
-{
-    extcutoff=1;
-    cutoff=0;
-}
-cutoffled=0;
-manualreset=0;
-}
-sensi=settings[2];
-if(ovolt>(settings[1]-(sensi+2))&&ovolt<(settings[1]+sensi))
-{
-voltup=0;
-voltdn=0;
-}
-if(ovolt>(settings[1]+sensi))
-{
-voltup=0;
-voltdn=1;
-}
-if(ovolt<(settings[1]-sensi))
-{
-voltdn=0;
-voltup=1;
-}
-if(settings[15]==1||voltprob==0)
-{
-if(ovolt<=(settings[3]-5))
-ophighled=0;
-if(ovolt>=(settings[4]+5))
-oplowled=0;
-
-if( (ophighled==0&&oplowled==0) && (ivolt<=(settings[5]-5)&&ivolt>=(settings[6]+5))&&ovlled==0)
-{
-cutoffcount++;
-cutoffcount1=0;
-iphighled=0;
-iplowled=0;
-resetted=0;
-ontime1=settings[11];
-//ontime1=ontime1*12;
-	ontime1=ontime1*20;
-
-
-if(settings[15]==2)//manual start
-    ontime1=12;
-if(cutoffcount>=ontime1||ovlreset==1)
-{
-ovlreset=0;
-cutoffcount=0;
-outputon=1;
-if(settings[15]==1&&manualreset==0)
-{
-    resetted=0;
-voltprob=0;
-if(settings[17]==1)
-{
-cutoff=1;
-extcutoff=0;
-}
-if(settings[17]==2)
-{
-    extcutoff=1;
-    cutoff=0;
-}
-cutoffled=0;
-}
-}
-}
-}
-if(ivolt>settings[5])
-{
-    etype=4;
-iphighled=1;
-iplowled=0;
-}
-if(ivolt<settings[6])
-{
-    etype=3;
-iphighled=0;
-iplowled=1;
-}
-if(ovolt>settings[3])
-{
-    etype=2;
-ophighled=1;
-oplowled=0;
-}
-if(ovolt<settings[4])
-{
-    etype=1;
-ophighled=0;
-oplowled=1;
-}
-
-if(iphighled==1||iplowled==1||ophighled==1||oplowled==1)
-{
-//cutoffcount1++;
-cutoffcount=0;
-
-if(cutoffcount1>=(settings[10]))
-{
-voltprob=1;
-cutoffcount1=0;
-outputon=0;
-cutoffled=1;
-
-
-if(etype<3)
-evalue=ovolt;
-if(etype>2&&etype<5)
-    evalue=ivolt;
-errorframe();
-cutoff=0;
-    extcutoff=0;
-
-}
-}
-}
-}
-
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											split routine
@@ -977,51 +1035,50 @@ void delay(char gg)
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 								incre key routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void incdecmode(void)
+void incrout(void)
 {
-keyatod();
-
-if(startkey==0)
-    inccome=0;
-if(startkey==1)
-{
-    if(inccome<100)
-    inccome++;
+//		keyatod();
+//		switchscan1();
+		if(inckey==0)
+				ipress=0;
+		if(inckey==1)
+		{
+				if(ipress<100)
+						ipress++;
    
-buffer=buffer+(1+(inccome/4));
+				buffer=buffer+(1+(ipress/4));
 
-if(buffer>999)
-    buffer=0;
-writ=1;
-}
+				if(buffer>999)
+						buffer=0;
+			//	writ=1;
+		}
 
-//if(stopkey==0)
-  //  deccome=0;
+		if(stopkey==0)
+//				deccome=0;
 
+		if(stopkey==1)
+		{
+			//if(deccome<100)
+			//  deccome++;
 
-if(stopkey==1)
-{
-//if(deccome<100)
-  //  deccome++;
-
-    //if(buffer>11)
-      //  buffer=buffer-(1+(deccome/4));
-    //if(buffer<12&&buffer>0)
+			//if(buffer>11)
+			//  buffer=buffer-(1+(deccome/4));
+    
+			//if(buffer<12&&buffer>0)
         if(buffer>0)
-        buffer--;
-    if(buffer==0)
-        buffer=999;
-writ=1;
-}
-if(smenu>0&&smenu<15&&smenu!=12)
-{
-splitl();
-address=0xca;
-valuewrite();
-delay(250);
-delay(250);
-
-}
+					buffer--;
+				if(buffer==0)
+					buffer=999;
+				//writ=1;
+			}
+			if(smenu>0&&smenu<15&&smenu!=12)
+			{
+				splitl();
+				address=0xca;
+				valuewrite();
+				delay(250);
+				delay(250);
+			}
 }
 
 
@@ -1031,124 +1088,82 @@ delay(250);
 
 void mult(void)
 {
-buffer1=digit1[1]*100+digit1[2]*10+digit1[3];    
+		buffer1=digit1[1]*100+digit1[2]*10+digit1[3];    
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											set volt routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void editmode(void)
+void keyscan(void)
 {
-keyatod();
-if(menukey==0)
-mpress=0;
+	//keyatod();
+	switchscan1();
+	switchscan();
+	if(!menukey)
+				mpress=0;
+		if(menukey&&mpress==0)
+		{
+						delay1(1);
 
-if(menukey==1&&mpress==0)
-{
-mpress=1;
-if(writ==1)
-{
-writ=0;
-mult();
-buffer=buffer1;
-	
-/*if(smenu>14)
-    buffer=settings[smenu];*/
+						if(menukey&&mpress==0)
+						{
+							    mult();
+									mpress=1;
+									if(datachang==1)
+								  {
+													combin();    //Storing data in buffer.
+													if(menu==0)  //Temperature max.
+													{
+																	temp_max=buffer;
+																	tempmax=temp_max;
+													//				address=4;
+													//        dualwrite();
+				  								}
+													if(menu==1)//oil_level
+													{
+																oil_level=buffer;
+														//		countlimit=count_limit;
+														//		address=6;
+														//    dualwrite();
+													}
+									}
+									
+									cblink=0;
+									blink=0;
+									menu_change=1;
+									chang=0;
+									datachang=0;
+									digit1[1]=0;
+									digit1[2]=0;
+									digit1[3]=0;
+									digit1[4]=0;
+									clearinglog=0;
+									menu++;//For selecting menu options. 
+									if(menu>3)//Decides number of menu options
+								     menu=0;
+									display2();
+						}
 
-original=buffer;
-if(smenu==13)
-{
-result=ovolt;
-docal();
-}
 
-if(smenu==14)
-{
-result=ivolt;
-docal();
-}
-if(smenu<15)
-settings[smenu]=buffer;
-if(settings[2]<3)
-    settings[2]=3;
-
-    FlashWrite();
-    IE|=(1<<7);
-}
-
-
-smenu++;
-if(smenu==13&&calib==0)
-     smenu=15;
-
-calib=0;
-calpress=0;
-if(smenu>17)
-smenu=1;
-display2();
-
-if(smenu==14)
-{
-for(i=0;i<20;i++)
-{
-involtscan();
-buffer=ivolt;
-splitl();
-delay(1);
-address=0xca;
-valuewrite();
-}
-}
-}		
-if(smenu!=12&&smenu<15)
-incdecmode();
-if(smenu==15||smenu==16||smenu==17)
-{
-    if(stopkey==0)
-       spress=0;
-    if(stopkey==1&&spress==0)
-    {
-        writ=1;
-        spress=1;
-        settings[smenu]++;
-        if(settings[smenu]>2)
-            settings[smenu]=1;
-            display2();
+				
+				if(menu==0){
+							blink=0;
+							cblink=0;
+							chang=1;
+				} 
+				  
     }
-}
-if(smenu==12&&stopkey==1)
-{
-    calpress++;
-    if(calpress>5)
-    {
-    calib=1;
-    smenu=13;
-    display2();
-if(smenu==13)
-{
- 
-for(i=0;i<20;i++)
-{
- outvoltscan();
- buffer=ovolt;
-splitl();
-delay(1);
-address=0xca;
-valuewrite();   
-}
-}
-}
-    
-}
+		//incrout();
+    //digitsel();
 }
 
 
 void fline(void)
 {
-chip=0;
-enabler(0x80);
-delay(2);
-chip=1;
+		chip=0;
+		enabler(0x80);
+		delay(2);
+		chip=1;
 }
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											main routine
@@ -1156,99 +1171,129 @@ chip=1;
 
 void sline(void)
 {
-chip=0;
-enabler(0xc0);
-delay(1);
-chip=1;
+		chip=0;
+		enabler(0xc0);
+		delay(1);
+		chip=1;
+}
+
+/*****************************************Main Display*****************************************************/
+void display(void)
+{
+	        if(screen_page == 0)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//							temp=temperaturestring[t3];//Live Temperature
+										temp = machine_status[t3];
+										enabler(temp);
+										delay(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//		        temp=proximitystring[t3];//Live Count.
+										temp = machine_line2[t3]; 
+										enabler(temp);
+										delay(5);
+
+								}
+					}
+					if(screen_page == 1)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//							temp=temperaturestring[t3];//Live Temperature
+										temp = coolant_status[t3];
+										enabler(temp);
+										delay(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//		        temp=proximitystring[t3];//Live Count.
+										temp = coolant_line2[t3]; 
+										enabler(temp);
+										delay(5);
+
+								}
+					}
+
+					chip=0;
+					enabler(0x0c);
+					delay(0x01);
 }
 
 void display2(void)
 {
-fline();
-chip=1;
-for(h=0;h<16;h++)
-{
-temp=fline1[h];
-enabler(temp);
-delay(1);
-}
-sline();
-for(h=0;h<16;h++)
-{
-if(smenu==1)
-temp=svt[h];
-
-if(smenu==2)
-temp=sen[h];
-
-if(smenu>2&&smenu<7)
-    temp=ohc[h];
-
-if((smenu==4||smenu==6)&&h==5)
-    temp='L';    
-if((smenu==5||smenu==6)&&h==1)
-    temp='I';
-if(smenu==7)
-temp=ctfs[h];
-
-if(smenu==8)
-temp=ovl[h];
-
-if(smenu==10||smenu==9)
-temp=vcut[h];
-if(smenu==9&&h==0)
-    temp='I';
-
-if(smenu==11)
-temp=auton[h];
-
-if(smenu==12)
-temp=calibx[h];
-
-if(smenu==13||smenu==14)
-    temp=iocal[h];
-
-if(smenu==15||smenu==16)
-{
-if(settings[smenu]==1)
-    temp=mod[h];
-
-if(settings[smenu]==2)
-    temp=mod1[h];
-}
-if(smenu==16)
-{
-    if(h==2)
-     temp='B';
-}
-if(smenu==17)
-{
-    temp=rmod[h];
-if(settings[17]==2)
-{
-    if(h==7)
-        temp='e';
-    if(h==8)
-        temp='x';
-}
-}
-if(smenu==14&&h==1)
-    temp='I';
-
-enabler(temp);
-delay(1);
-}
-if(smenu<12)
-{
-qmax=0;
-buffer=settings[smenu];
-splitl();
-address=0xca;
-valuewrite();
-}
-chip=0;
-enabler(0x0c);
-delay(0x02);
+			fline();
+			chip=1;
+			for(t3=0;t3<16;t3++)
+			{
+					temp=fline1[t3];//SET mode
+					enabler(temp);
+					delay(1);
+			}
+			/**************************************MENU SELECTION***********************************************/
+			sline();
+			for(t3=0;t3<16;t3++)
+			{
+					if(menu==0)//Temperature max display.
+							temp=temp_maximum[t3];
+					if(menu==1)//oil level display.
+							temp=oil_lowlvl[t3];
+					if(menu==2)
+							temp=max_vib[t3];
+					if(menu==3)
+							temp=run_time[t3];
+					enabler(temp);
+					delay(5);
+			}
+			/***********************Digits displaying**************************************************/
+			setconversion();
+			//			if(menu==0)
+//			{
+//					split1();
+//					chip=0;
+//					enabler(0xca);//Second line 10th position
+//					delay(0x01);
+//					valuewrite();
+//			}
+//			if(menu==1)
+//			{
+//					split1();
+//					chip=0;
+//					enabler(0xcc);//Second line 10th position
+//					delay(0x01);
+//					valuewrite();
+//			}
+//			if(menu==2)
+//			{
+//					split1();
+//					chip=0;
+//					enabler(0xc8);//Second line 10th position
+//					delay(0x01);
+//					valuewrite();
+//			}
+//			if(menu==3)
+//			{
+//					split1();
+//					chip=0;
+//					enabler(0xca);//Second line 10th position
+//					delay(0x01);
+//					valuewrite();
+//			}
+			chip=0;
+			enabler(0x0c);
+			delay(0x01);
 }
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											set volt routine
@@ -1257,102 +1302,574 @@ delay(0x02);
 void docal(void)
 {
     mdiv();
-buffer=result;
+//buffer=result;
 }
+
 void voltcal(void)
 {
-result=resultx;
-//if(v_cal<670||v_cal>950)
-//v_cal=790;
-if(v_cal<760||v_cal>1000)
-	    v_cal=880;
-original=v_cal;
-mdiv();
+		//result=resultx;
+		//if(v_cal<670||v_cal>950)
+		//v_cal=790;
+		if(v_cal<760||v_cal>1000)
+					v_cal=880;
+		original=v_cal;
+		mdiv();
 
-    fcompensate=frequency-500;
-    fcompensate=fcompensate>>2;
-    result=result+fcompensate;
+		//    fcompensate=frequency-500;
+		//    fcompensate=fcompensate>>2;
+		//    result=result+fcompensate;
 }
+
 void mdiv(void)
 {
-result=(result*1000)/original;
+			result=(result*1000)/original;
 }
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											set volt routine
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void setmode(void)
+{
+    switchscan();
+		if(waitset==0)
+		{	
+					//if(((sw2==1)&&(menu==0)&&(setswitch==0)&&(menu<=3)))
+					if(((sw2==1)&&(menu<=3)))
+					{
+													counter++;	 
+										//      if((counter>25)&&(menu==0))  
+													if((counter>25)&&(menu<=3)&&(switchset==1)) 
+													{
+														counter=0;
+														switchset=0;
+														switchset1=1;
+														menu++;
+														if(menu>3)
+																menu=0;
+														display2();
+											//     if(memsave1==1)
+											//     {
+											//      memsave=1;
+											//      memsave1=0;
+											//    }
+														if((menu==0)||(menu==2)||(menu==3))
+														{
+																		counter4=80;
+														}
+													}
+					}
+					if(((menu==0)||(menu==2)||(menu==3))&&(switchset1==1))
+					{    
+											counter2++;
+											if(counter2<counter4)
+											{
+															setswitch=1;
+															if(menu==0)
+															{
+															//		display_lcd[1]=0;
+															//		display_lcd[2]=20;
+															//		display_lcd[3]=19;
+															//	  dp1=0;
+															//	  dp2=0;
+															}
+										//					
+										//					if(smode1==2)
+										//					{
+										//						display[1]=25;//hvc
+										//						display[2]=20;
+										//						display[3]=12;
+										//						dp1=0;
+										//						dp2=0;
+										//					}
+										//					if(smode1==3)
+										//					{
+										//						display[1]=19;//lvc
+										//						display[2]=20;
+										//						display[3]=12;
+										//						dp1=0;
+										//						dp2=0;
+										//					}
+									     }
+												if((counter2>counter4))
+												{
+														setswitch=0;
+														if(menu==0)
+														{
+															dec=tempmax;
+															if(dec>200)
+																	dec=10;
+															//dp2=1;	
+														}
+											//			if(smode1==2)
+											//			{
+											//				dec=hvc;
+											//				dp1=0;
+											//				dp2=0;
+											//				if(dec>320)
+											//				dec=231;
+											//			}
+											//			if(smode1==3)
+											//			{
+											//				dec=lvc;
+											//				dp1=0;
+											//				dp2=0;
+											//				if(dec>230)
+											//				dec=150;
+											//			}
+														if((menu==0)||(menu==2)||(menu==3))
+														{
+																	setconversion();
+														}
+														switchset1=0;
+														counter2=0;
+														switchpress=1;
+												}
+							//	}
+							//		if(((sw1==1)&&(switchpress==1)&&((menu==0)||(menu==2)||(menu==3))))  
+									if(((sw1==1)&&((menu==0)||(menu==2)||(menu==3))))  		
+									{
+														//switchpress=0;
+														counter1++;
+														setreset=0;
+														
+														if(counter1>100)
+														{
+														//memsave1=1;
+																counttime4=1;
+																counter1=0;
+														}
+														
+														if((counttime4==1)&&(check==1))
+														{
+																	counter3=counter3-5;
+																	check=0;
+																	if(counter3<=5)
+																	{
+																			counter3=5;
+																	}
+														}
+														
+														if((counter1>20)&&(switchset2==1)&&(counttime4==0))
+														{
+															//		memsave1=1;
+																	counter1=0;
+																	switchset2=0;
+																	decrement=1;
+														}
+														
+														if((counter1>counter3)&&(counttime4==1))
+														{
+																	 decrement=0;
+																	 check=1;
+																	 counter1=0;
+																	 switchset2=0;
+																		 if((menu==0)||(menu==2)||(menu==3))
+																		 {
+																				dec=dec+1;
+																				if(menu==0)
+																				{
+																								if(dec>200){
+																										dec=10;}
+																								tempmax=dec;
+																								DP=0;
+																				}
+								//												if(smode1==2)
+								//												{
+								//																if(dec>320)
+								//																		dec=231;
+								//																hvc=dec;
+								//																DP=0;
+								//												}
+								//											  if(smode1==3)
+								//												{
+								//																if(dec>230)
+								//																	dec=150;
+								//																lvc=dec;
+								//																DP=0;
+								//												}
+																				setconversion();
+																	}
+														}
+								}
+									////////////////////////////////////////////
+								if((decrement==1)&&(switchset2==1))
+								{
+										decrement=0;
+										switchset2=0;
+										if((menu==0)||(menu==2)||(menu==3))
+										{
+											if(dec==0)
+													dec=1-dec;
+											if(dec>0)
+													dec=dec-1;
+											if(menu==0)
+											{
+														if(dec<10)
+																dec=200;
+														tempmax = dec;
+											}
+											//			if(smode1==2)
+											//			{
+											//				if(dec<231)
+											//				dec=320;
+											//				hvc=dec;
+											//				dp=0;
+											//			}
+											//			if(smode1==3)
+											//			{
+											//				if(dec<150)
+											//				dec=230;
+											//				lvc=dec;
+											//				dp=0;
+											//			}
+														setconversion();
+											 }
+									}
+			 }
+	  }
+}
 
+void setconversion(void)
+{
+    if(menu==0)
+    {
+        display_lcd[1]= (tempmax/100)+0x30;
+        display_lcd[2]=((tempmax%100)/10)+0x30;
+      //  display_lcd[3]=((tempmax%100)%10)+0x30;
+			  display_lcd[3]=set_bit_check+0x30;
+			//    sline();
+			    chip=0;
+					enabler(0xca);//Second line 10th position
+					delay(0x01);
+			    chip=1;
+		      for(ibm=1;ibm<4;ibm++)
+					{
+								temp=display_lcd[ibm];
+								enabler(temp);
+								delay(0x01);
+					}
+    }
+		
+//    if(smode1==2)
+//    {
+//        display[1]= hvc/100;
+//        display[2]=(hvc%100)/10;
+//        display[3]=(hvc%100)%10;
+//    }
+
+//    if(smode1==3)
+//    {
+//        display[1]= lvc/100;
+//        display[2]=(lvc%100)/10;
+//        display[3]=(lvc%100)%10;
+//    }
+}
+
+void switchscan(void)
+{
+		  resultx2=0;
+      for(scan=0;scan<250;scan++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/250;
+			
+		 	if((result>480)&&(result<530))//menukey
+			{
+				  //  sw2=1;
+	        //  sw1=0;
+						setruntime=0;
+						menutime++;
+
+						if(menutime>1)
+						{
+								setruntime=0;
+						    sw2=1;
+	              sw1=0;
+						}
+			}
+			
+			if((result>680)&&(result<730))//inc key
+			{
+				   sw1=1;
+           sw2=0;
+			}
+			
+		  if(result>800)
+			{
+					setruntime=0;
+					setrun=0;
+					waitset=0;
+				  switchset=1;
+          switchset2=1;
+					inctime=0;
+				  sw2=0;
+				  sw1=0;
+				  counter1=0;
+          counter3=50;
+          counttime2=5;
+          counttime=0;
+          counttime4=0;
+          counttime1=2;
+			}
+}	
+
+void switchscan1(void)  //run mode
+{
+		  resultx2=0;
+      for(scan=0;scan<50;scan++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/50;
+		 	if((result>380)&&(result<450))//set/run
+			{
+						setruntime++;
+						menutime=0;
+						inctime=0;
+						sidetime=0;
+						if(setruntime>1)
+						{
+								setrun=1;
+								menukey=0;
+								sidekey=0;
+								inckey=0;
+						}
+			}
+			
+		  if(result>800)
+			{
+				waitset=0;
+        sw1=0;
+        sw2=0;
+        switchset=1;
+        switchset2=1;
+        counter1=0;
+        counter3=50;
+        counttime2=5;
+        counttime=0;
+        counttime4=0;
+        counttime1=2;
+        switchdisp=0;	
+			}
+//		 if(smode==1 && smode1==0)
+//		 {
+//		 
+//						smode1=0;
+//						led=0;
+//						display[1]=5;
+//						display[2]=14;
+//						display[3]=23;
+//						dp1=0;
+//						dp2=0;
+//		 }
+//		 
+//		if((vref2>200)&&(vref2<=280))//both switch pr
+//		{
+//	
+//			if(press==1)
+//			{
+//				smode=!smode; 
+//				
+//				if(smode==1)
+//				{
+//					smode1=0;
+//					led=0;
+//					rmenu=1;
+//					scrollingcount=0;
+//				}
+//				
+//					if(smode==0)
+//					{
+//					rmenu=1;
+//					scrollingcount=0;
+//					led=1;
+//					}
+//					
+//					
+//				switchset2=0;
+//				counttime=0;
+//				waitset=1;
+//				
+//				
+//				if(smode==1)
+//				{	
+//						// to display "set"
+//						display[1]=5;
+//						display[2]=14;
+//						display[3]=23;
+//						dp=0;
+//						counter=0;
+//						setswitch=0;	
+//				}
+//				
+//				press=0;
+//			}
+//		
+//		}
+//		
+//		if((vref2>300)&&(vref2<=350))//switch1 press  - Menu key
+//    {
+//	
+//			sw2=1;
+//	    sw1=0;
+//			
+//    }
+
+//		if((vref2>450)&&(vref2<=550))//switch 2 press - Inc/Dec key
+//    {
+//				
+//        sw1=1;
+//        sw2=0;
+//			
+//				if(smode==0&&olr==1)
+//				{
+//					olr=0;
+//					rolrx=0;
+//					yolrx=0;
+//					bolrx=0;
+//				} 
+//    }
+//		
+//		if((vref2>990))//no switch press
+//    {
+//				waitset=0;
+//        press=1;
+//        sw1=0;
+//        sw2=0;
+//        switchset=1;
+//        switchset2=1;
+//        counter1=0;
+//        counter3=50;
+//        counttime2=5;
+//        counttime=0;
+//        counttime4=0;
+//        counttime1=2;
+//        switchdisp=0;	
+//				rmenupress=0;
+//    }
+
+}
+
+
+/*
 void keyatod(void)
 {
-channel=0x0f;//switch
-atodconv();
-if(result>970)
+	    adcal_switch();
+      result = sw_adc_result;
+			if((result>380)&&(result<450))//set/run
+			{
+						setruntime++;
+						menutime=0;
+						inctime=0;
+						sidetime=0;
+						if(setruntime>1)
+						{
+								setrun=1;
+								menukey=0;
+								sidekey=0;
+								inckey=0;
+						}
+			}
+
+			if((result>680)&&(result<730))//inc key
+			{
+					setruntime=0;
+					menutime=0;
+					sidetime=0;
+					inctime++;
+					if((inctime>1)&&(automan==1))
+					{
+							menukey=0;
+							sidekey=0;
+							inckey=1;
+							setrun=0;
+					}
+					if((inctime>100)&&(automan==0))
+					{
+								timerhigh=0;
+//								TMR0=0;
+								proximitycount=0;
+								//address=8;
+								////dualwrite();
+								count_save=0;
+								tempfaultflag=0;
+								countfaultflag=0;
+					//	faultime=fault_time;
+					//	faultflag=0;
+					//
+					}
+			}
+
+			if((result>50)&&(result<130))//sidekey
+			{
+					setruntime=0;
+					menutime=0;
+					sidetime++;
+					inctime=0;
+					if(sidetime>1)
+					{
+							setrun=0;
+							menukey=0;
+							sidekey=1;
+							inckey=0;
+					}
+			}
+
+			if((result>480)&&(result<530))//menukey
+			{
+						setruntime=0;
+						menutime++;
+						sidetime=0;
+						inctime=0;
+						if(menutime>1)
+						{
+								setruntime=0;
+								menukey=1;
+								sidekey=0;
+								inckey=0;
+						}
+			}
+
+			if(result>800)
+			{
+					setruntime=0;
+					menukey=0;
+					sidekey=0;
+					inckey=0;
+					setrun=0;
+					menutime=0;
+					sidetime=0;
+					inctime=0;
+			}
+/*if(inckey==1)
 {
-amanpress=0;
-startkey=0;
-stopkey=0;
-menukey=0;
-automan=0;
-stoppress=0;
-startpress=0;
-menupress=0;
+timerhigh=0;
+TMR0=0;
+proximitycount=0;
+//address=8;
+////dualwrite();
+
+			
+tempfaultflag=0;
+countfaultflag=0;
+//	faultime=fault_time;
+//	faultflag=0;
+//	faultrun=0;
 }
-if(result>670&&result<740)
-{
-    stoppress++;
-   //if(stoppress>1)
-	if(((stoppress>3)&&(automansw==1))||((automansw==0)&&(stoppress>=1)))
-    {
-nokey=0;
-startkey=0;    
-stopkey=1;
-automan=0;
-menukey=0;
-if(reportzero==1)
-{
-settings[18]=0;
-FlashWrite();
-IE|=(1<<7);
-}
-}
-}
-if(result>810&&result<880)
-{
-    startkey=0;
-    stopkey=0;
-    menukey=0;
-    automan=1;
-}
-if(result<70)
-{
-    menupress++;
-  if(menupress>1)
-      {
-automan=0;
-startkey=0;
-stopkey=0;
-menukey=1;
-}
-}
-if(result>480&&result<550)
-{
-    startpress++;
-  // if(startpress>1)
-	if(((startpress>3)&&(automansw==1))||((automansw==0)&&(startpress>=1)))
-    {
-    nokey=0;
-    automan=0;
-    stopkey=0;
-    startkey=1;
-}
-}
-}
+
+*/
+
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 								o/p freq conversion routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void zccheck(void)
 {
- zerodetect=0;
-while(zerodetect<3)//3
+// zerodetect=0;
+/*while(zerodetect<3)//3
 {
 IE&=~(1<<7);
 adcal1();
@@ -1361,7 +1878,7 @@ adcal1();
 //if(result2<7)
 if(result2<7)
 zerodetect++;
-}   
+}*/   
  IE|=(1<<7);
 }
 /*void lfreq(void)
@@ -1469,7 +1986,7 @@ if(TH2>85)//47
 TR2=0;
 //if(TH2<64)
   // TH2=64;
-if(ovolt<150)
+//if(ovolt<150)
     TH2=78;
 
 result=TH2*256+TL2;
@@ -1517,6 +2034,7 @@ unsigned char Read_APROM_BYTE(unsigned int code *u16_addr)
     rdata = *u16_addr >> 8;
     return rdata;
 }
+
 void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
 {
     unsigned char looptmp = 0;
@@ -1561,17 +2079,18 @@ void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
     clr_IAPUEN_APUEN;
     clr_CHPCON_IAPEN;
 }
+
 void FlashWrite(void)
 {
 	IE&=~(1<<7);
-for(loop=1,loop2=1;loop<32,loop2<61;loop++,loop2+=2)
-{
-	     highbyte=((settings[loop]&(0xFF00))>>8);
-	     lowbyte=(settings[loop]&(0x00FF));
-	     Write_DATAFLASH_BYTE(16800+loop2,highbyte);
-	      Write_DATAFLASH_BYTE(16800+loop2+1,lowbyte);
-}
-IE|=(1<<7);
+	for(loop=1,loop2=1;loop<32,loop2<61;loop++,loop2+=2)
+	{
+				 highbyte=((settings[loop]&(0xFF00))>>8);
+				 lowbyte=(settings[loop]&(0x00FF));
+				 Write_DATAFLASH_BYTE(16800+loop2,highbyte);
+				 Write_DATAFLASH_BYTE(16800+loop2+1,lowbyte);
+	}
+	IE|=(1<<7);
 }
 
 void dataread(void)
@@ -1625,30 +2144,85 @@ void dataread(void)
 			settings[18]=0;
 
 }
-/*count1=0;
-while(count1<8)
-{
-dclock=0;
-r3x=r3x<<1;
-if(CARRY)
-{
-ddata=1;
-dclock=1;
-}
-if(!CARRY)
-{
-ddata=0;
-dclock=1;
-}
-count1++;
-}
-dclock=0;
-ddata=0;
 
-//
-if(ovolt>205)
-    TH2=77;
-//
-*/
+void tempandptywrite(void)
+{
+
+	if(screen_page == 1)
+	{
+				sline();
+		    chip=0;
+				enabler(0xC4);
+				delay(5);
+
+				chip=1;
+				//enabler((temperature1/100)+0x30);
+				//delay(2);
+				
+				enabler(((temperature1%100)/10)+0x30);
+				delay(2);
+
+				enabler((temperature1%10)+0x30);
+				delay(2);
+	}
+	if(!screen_page)
+	{
+		  sline();
+			chip=0;
+			enabler(0xc2);
+			delay(1);
+
+			chip=1;
+		
+			enabler((pr_count/1000)+0x30);
+			delay(1);
+		
+	  	enabler(((pr_count%1000)/100)+0x30);
+			delay(1);
+			
+			enabler(((pr_count%100)/10)+0x30);
+			delay(1);
+
+			enabler((pr_count%10)+0x30);
+			delay(1);
+	}
+//	chip=1;
+//	
+//  enabler((result/1000)+0x30);
+//	delay(1);
+//	
+//	enabler(((result%1000)/100)+0x30);
+//	delay(1);
+//	
+//	enabler(((result%100)/10)+0x30);
+//	delay(1);
+//	
+//	enabler((result%10)+0x30);
+//	delay(1);
+
+	chip=0;
+	enabler(0x0c);
+	delay(0x01);
+
+}
+
+void delay1(int t8)
+{
+	for(r1=0;r1<t8;r1++)
+	{
+		for(r2=0;r2<250;r2++)
+		{
+			for(r3=0;r3<250;r3++);
+		}
+	}
+}
 
 
+void combin(void)
+{
+ //if(menu==0||menu==1)  
+ {
+    buffer=digit1[1]*100+digit1[2]*10+digit1[3];//If datachange occurs buffer is storing the value,For 3-digit(Trigger timer).
+ }
+
+}
