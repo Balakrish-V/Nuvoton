@@ -174,7 +174,7 @@ xdata char address=0,lmenu=0,adcome=0;
 xdata char setruntime=0,sidetime=0,inctime=0,menutime=0;
 xdata unsigned char switchpress=0;
 xdata unsigned int temp_min=0,temp_max=0,oil_level=0,count_save=0,rtz2f_timer=0,park_time=0,fault_time=0,trig_timer=0,rtc_time=0;
-xdata unsigned int buffer=0,result=0,result1=0,parkrun=0,tempmax=0, sensetimes=0,countlimit=0;
+xdata unsigned int buffer=0,result=0,result1=0,parkrun=0,tempmax=0, oil_low_level = 0, max_vib_var = 0, run_time_var = 0,sensetimes=0,countlimit=0;
 xdata unsigned int counter2=0,counter4=0;
 xdata unsigned int m=0,n=0,o=0,timerhigh=0;
 xdata unsigned char setswitch=0;
@@ -222,7 +222,7 @@ unsigned char rdata;
 //xdata char zerodetect=0,etype=0,errortime=0,eaddr=0,erase=0,reportzero=0;
 xdata unsigned int counter3=0, counter1=0, counttime2=0;
 xdata unsigned int counttime4=0,counttime1=0,switchdisp=0;
-xdata unsigned char display_lcd[4];
+xdata unsigned char display_lcd[5];
 xdata char amanpress=0;
 xdata char loop=0,lcome=0,reg=0,reg7=0,temp=0,icome=0,t3=0;
 volatile unsigned int r1, r2, r3;
@@ -255,8 +255,6 @@ void enabler(char t4);
 void delay(char gg);
 void timer_init(void);
 void lcdinit(void);
-void splitl(void);
-void split(void);
 void switchscan1(void);
 void tempandptywrite(void);
 void valuewrite(void);
@@ -304,11 +302,14 @@ void main()
 							chip=0;
 							enabler(0x01);
 							menu=0;
+					    sw2=1;
 							display();
 				}
 				while(automan==0)//Run mode.
 				{
 					  //keyscan();
+						switchscan1();
+	         // switchscan();
 					  tempScan();
 						if(displaycount>30)
 						{
@@ -329,10 +330,10 @@ void main()
 	//							count_save=count_save+proximitycount;
 	//							buffer=count_save;
 	//							address=10;
-	//							////dualwrite();
+	//							dualwrite();
 	//							proximitycount=0;
 	//							timerhigh=0;
-	//							//TMR0=0;
+	//							TMR0=0;
 	//					}
 
 	//					if(count_save>=count_limit){
@@ -347,22 +348,12 @@ void main()
 	//					}
 	//					if(countfaultflag==1){
 	//							delay1(5);
-	//							//greenled=1;
-	//							delay1(5);
 	//					}
 
 	//					if(tempfaultflag==1){
 	//							delay1(5);
-	//							//redled=1;
-	//							delay1(5);
 	//					}
-	//					if(countfaultflag==0)
-	//					//greenled=0;
-
-	//					if(tempfaultflag==0){
-	//					//redled=0;
-
-	//					}
+	
 					
 						if(automan==1)
 						{
@@ -370,18 +361,20 @@ void main()
 									chip=0;
 									enabler(0x01);
 									menu=0;
+							    sw2=1;
 									display2();
 						}
 						while(automan==1)
 						{
 //										 sline();
 //										 enabler('K');
+//								     switchscan1();
+	              switchscan();
 								if((menu_change!=0)&&(menu1==0))
 								{
 										display2();
 										menu1=1;
 								}
-								//keyscan();
 								setmode();
 					 }
      }
@@ -392,9 +385,6 @@ void main()
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void Timer_ISR (void) interrupt 16
 {
-	  // keyatod(); 
-	   switchscan1();
-	   switchscan();
 	   T3CON &= ~(1 << 4);   // Clear TF3 (bit4)
  
 	      msec++;
@@ -431,6 +421,7 @@ void Timer_ISR (void) interrupt 16
 				}
 
 				last_state = current_state;		
+
 /*
 if(ovlled==1)
 {
@@ -745,94 +736,6 @@ void enabler1(char ladr,char ldata)
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-//void valuewritex(void)
-//{
-////buffer=ovolt;
-//splitl();
-//address=0x80;
-//valuewrite();
-
-////buffer=current;
-//splitl();
-//address=0x85;
-//valuewrite();
-
-////buffer=ivolt;
-//splitl();
-//address=0xc0;
-//valuewrite();
-//buffer=frequency;
-//qmax=1;
-//splitl();
-//qmax=0;
-//address=0x8a;
-//valuewrite();
-//chip=0;
-//enabler(0x0c);
-
-
-//enabler1(0x83,'V');
-//enabler1(0x88,'A');
-//enabler1(0x8e,'H');
-//enabler1(0x8F,'z');
-//enabler1(0xc3,'V');//C0
-//enabler1(0xc4,'i');//C1
-
-
-
-//    if(settings[18]>0)
-//    {
-//    enabler1(0xc7,'E');
-////    errortime=settings[18];
-////    if(errortime>lmenu)
-////    errortime=errortime-lmenu;
-//    
-//    
-////    if(errortime<12)
-//    {
-//    adrcal();
-//    enabler(errortime1+0x30);
-//    enabler('-');
-//    delay(1);
-//   
-//  //  etype=settings[eaddr];
-////    evalue=settings[eaddr+1];
-////    errortime=settings[18];
-//    
-////    if(etype==1||etype==2||etype==5)    
-//    enabler('O');
-////    if(etype==3||etype==4)
-//    enabler('I');    
-//    delay(1);
-////    if(etype==1||etype==3||etype==5)
-//    enabler('L');
-////    if(etype==2||etype==4)
-//    enabler('H');    
-//    delay(1);
-////    if(etype<5)
-//    enabler('V');
-////    if(etype==5)
-//    enabler('T');    
-//    delay(1);
-//    
-////buffer=evalue;
-//splitl();
-//address=0xcd;
-//valuewrite();
-//    }
-//    } 
-//    chip=0;
-//   enabler(0x0c); 
-//}
-
-
-void adrcal(void)
-{
-    // errortime1=errortime;
-//    if(errortime>5)
-  //   errortime1=errortime-5;
-//    eaddr=17+(errortime1*2);
-}
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -894,88 +797,6 @@ void valuewrite(void)
 			*/
 }
 
-
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-						    main routine
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void split1(void)
-{
-				if(menu==0)
-					buffer=temp_max; 
-				if(menu==1)
-					buffer=oil_level; 
-				if(menu==2)
-					buffer=vib_level;
-				if(menu==3)
-					buffer=time_set;
-
-					split();
-
-					/*if(menu==5||mainscreen==1)
-					{
-							digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
-							digit1[2]=dbuf[2]-0x30;//converting back int to char.
-							digit1[3]=dbuf[3]-0x30;
-
-
-					}else if(menu==6||menu==7)
-					{
-
-					digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
-							digit1[2]=dbuf[2]-0x30;
-
-					}else
-					*/
-
-					if(menu==0||menu==1||menu==2||menu==3){
-							digit1[1]=dbuf[1]-0x30;//dbuf is from split function.
-							digit1[2]=dbuf[2]-0x30;//converting back int to char.
-							digit1[3]=dbuf[3]-0x30;
-							if(menu==3)
-							   digit1[4]=dbuf[4]-0x30;
-					}
-}
-
-
-void split(void)
-{
-			/*************************Saving 4-digits to dbuf array***********************************************/
-		 if(menu==0||menu==1||menu==2||menu==3){
-						dbuf[1]=(buffer/1000)+0x30;//Converting char to int.
-						buffer=buffer%1000;
-						dbuf[2]=(buffer/100)+0x30;
-						buffer=buffer%100;
-						dbuf[3]=(buffer/10)+0x30;
-						dbuf[4]=(buffer%10)+0x30;
-
-						if(menu==0||menu==1||menu==2)
-						{
-								dbuf[1]=dbuf[2];
-								dbuf[2]=dbuf[3];
-								dbuf[3]=dbuf[4];
-								dbuf[4]=nu;
-						}
-						
-			}
-    
-		 /*   if(menu==6||menu==7)
-				{
-						dbuf[1]=(buffer/10)+0x30;//Converting char to int.
-					 
-						dbuf[2]=(buffer%10)+0x30;
-					 
-				}
-				if(menu==5||mainscreen==1)
-				{
-						dbuf[1]=(buffer/100)+0x30;//Converting char to int.
-						 buffer=buffer%100;
-						dbuf[2]=(buffer/10)+0x30;
-						dbuf[3]=(buffer%10)+0x30;
-				}*/
-}
-
-
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 						    main routine
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -1032,132 +853,9 @@ void delay(char gg)
 		TR0=0;
 }
 
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-								incre key routine
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void incrout(void)
-{
-//		keyatod();
-//		switchscan1();
-		if(inckey==0)
-				ipress=0;
-		if(inckey==1)
-		{
-				if(ipress<100)
-						ipress++;
-   
-				buffer=buffer+(1+(ipress/4));
-
-				if(buffer>999)
-						buffer=0;
-			//	writ=1;
-		}
-
-		if(stopkey==0)
-//				deccome=0;
-
-		if(stopkey==1)
-		{
-			//if(deccome<100)
-			//  deccome++;
-
-			//if(buffer>11)
-			//  buffer=buffer-(1+(deccome/4));
-    
-			//if(buffer<12&&buffer>0)
-        if(buffer>0)
-					buffer--;
-				if(buffer==0)
-					buffer=999;
-				//writ=1;
-			}
-			if(smenu>0&&smenu<15&&smenu!=12)
-			{
-				splitl();
-				address=0xca;
-				valuewrite();
-				delay(250);
-				delay(250);
-			}
-}
-
-
-/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-						    main routine
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-void mult(void)
-{
-		buffer1=digit1[1]*100+digit1[2]*10+digit1[3];    
-}
-
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 											set volt routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void keyscan(void)
-{
-	//keyatod();
-	switchscan1();
-	switchscan();
-	if(!menukey)
-				mpress=0;
-		if(menukey&&mpress==0)
-		{
-						delay1(1);
-
-						if(menukey&&mpress==0)
-						{
-							    mult();
-									mpress=1;
-									if(datachang==1)
-								  {
-													combin();    //Storing data in buffer.
-													if(menu==0)  //Temperature max.
-													{
-																	temp_max=buffer;
-																	tempmax=temp_max;
-													//				address=4;
-													//        dualwrite();
-				  								}
-													if(menu==1)//oil_level
-													{
-																oil_level=buffer;
-														//		countlimit=count_limit;
-														//		address=6;
-														//    dualwrite();
-													}
-									}
-									
-									cblink=0;
-									blink=0;
-									menu_change=1;
-									chang=0;
-									datachang=0;
-									digit1[1]=0;
-									digit1[2]=0;
-									digit1[3]=0;
-									digit1[4]=0;
-									clearinglog=0;
-									menu++;//For selecting menu options. 
-									if(menu>3)//Decides number of menu options
-								     menu=0;
-									display2();
-						}
-
-
-				
-				if(menu==0){
-							blink=0;
-							cblink=0;
-							chang=1;
-				} 
-				  
-    }
-		//incrout();
-    //digitsel();
-}
-
-
 void fline(void)
 {
 		chip=0;
@@ -1259,173 +957,87 @@ void display2(void)
 			}
 			/***********************Digits displaying**************************************************/
 			setconversion();
-			//			if(menu==0)
-//			{
-//					split1();
-//					chip=0;
-//					enabler(0xca);//Second line 10th position
-//					delay(0x01);
-//					valuewrite();
-//			}
-//			if(menu==1)
-//			{
-//					split1();
-//					chip=0;
-//					enabler(0xcc);//Second line 10th position
-//					delay(0x01);
-//					valuewrite();
-//			}
-//			if(menu==2)
-//			{
-//					split1();
-//					chip=0;
-//					enabler(0xc8);//Second line 10th position
-//					delay(0x01);
-//					valuewrite();
-//			}
-//			if(menu==3)
-//			{
-//					split1();
-//					chip=0;
-//					enabler(0xca);//Second line 10th position
-//					delay(0x01);
-//					valuewrite();
-//			}
 			chip=0;
 			enabler(0x0c);
 			delay(0x01);
 }
-/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-											set volt routine
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-void docal(void)
-{
-    mdiv();
-//buffer=result;
-}
-
-void voltcal(void)
-{
-		//result=resultx;
-		//if(v_cal<670||v_cal>950)
-		//v_cal=790;
-		if(v_cal<760||v_cal>1000)
-					v_cal=880;
-		original=v_cal;
-		mdiv();
-
-		//    fcompensate=frequency-500;
-		//    fcompensate=fcompensate>>2;
-		//    result=result+fcompensate;
-}
-
-void mdiv(void)
-{
-			result=(result*1000)/original;
-}
-/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-											set volt routine
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 void setmode(void)
 {
     switchscan();
+	  switchscan1();
+	  switchset1=1;
 		if(waitset==0)
 		{	
-					//if(((sw2==1)&&(menu==0)&&(setswitch==0)&&(menu<=3)))
-					if(((sw2==1)&&(menu<=3)))
+			    if(((sw2==1)&&(automan==1)&&(setswitch==0)&&(menu<=3)))  //menu switch for setting temp,oil level etc.,
 					{
-													counter++;	 
-										//      if((counter>25)&&(menu==0))  
-													if((counter>25)&&(menu<=3)&&(switchset==1)) 
-													{
-														counter=0;
-														switchset=0;
-														switchset1=1;
-														menu++;
-														if(menu>3)
-																menu=0;
-														display2();
-											//     if(memsave1==1)
-											//     {
-											//      memsave=1;
-											//      memsave1=0;
-											//    }
-														if((menu==0)||(menu==2)||(menu==3))
+												    counter++;	 
+											      if((counter>25)&&(automan==1)&&(switchset==1))
 														{
-																		counter4=80;
-														}
+																	counter=0;
+																	switchset=0;
+																	switchset1=1;
+																	menu = menu + 1;
+																	if(menu>3)
+																			menu=0;
+																	display2();
+														//     if(memsave1==1)
+														//     {
+														//      memsave=1;
+														//      memsave1=0;
+														//    }
+														//							if((menu==0)||(menu==1)||(menu==2)||(menu==3))
+														//							{
+														//										counter4=80;
+														//							}
 													}
 					}
-					if(((menu==0)||(menu==2)||(menu==3))&&(switchset1==1))
+/*******************************************************************************************/					
+					if(((menu==0)||(menu==2)||(menu == 3))&&(switchset1==1))
 					{    
+						
 											counter2++;
-											if(counter2<counter4)
-											{
-															setswitch=1;
-															if(menu==0)
-															{
+										//	if(counter2<counter4)
+										//	{
+										//		      tempmax = 455;
+										//					setswitch=1;
+										//					if(menu==0)
+										//					{
 															//		display_lcd[1]=0;
 															//		display_lcd[2]=20;
 															//		display_lcd[3]=19;
-															//	  dp1=0;
-															//	  dp2=0;
-															}
-										//					
-										//					if(smode1==2)
-										//					{
-										//						display[1]=25;//hvc
-										//						display[2]=20;
-										//						display[3]=12;
-										//						dp1=0;
-										//						dp2=0;
 										//					}
-										//					if(smode1==3)
-										//					{
-										//						display[1]=19;//lvc
-										//						display[2]=20;
-										//						display[3]=12;
-										//						dp1=0;
-										//						dp2=0;
-										//					}
-									     }
+										//	}				
 												if((counter2>counter4))
 												{
+		
 														setswitch=0;
 														if(menu==0)
 														{
 															dec=tempmax;
-															if(dec>200)
-																	dec=10;
-															//dp2=1;	
+															if(dec>100)
+																	dec=5;													
 														}
-											//			if(smode1==2)
-											//			{
-											//				dec=hvc;
-											//				dp1=0;
-											//				dp2=0;
-											//				if(dec>320)
-											//				dec=231;
-											//			}
-											//			if(smode1==3)
-											//			{
-											//				dec=lvc;
-											//				dp1=0;
-											//				dp2=0;
-											//				if(dec>230)
-											//				dec=150;
-											//			}
-														if((menu==0)||(menu==2)||(menu==3))
+										        if(menu==2)
 														{
-																	setconversion();
+															dec=max_vib_var;
+															if(dec>600)
+																	dec=150;													
 														}
-														switchset1=0;
+														if(menu==3)
+														{
+															dec=run_time_var;
+															if(dec>9999)
+																	dec=0;													
+														}
+														setconversion();//1
+							//							switchset1=0;
 														counter2=0;
 														switchpress=1;
 												}
 							//	}
-							//		if(((sw1==1)&&(switchpress==1)&&((menu==0)||(menu==2)||(menu==3))))  
-									if(((sw1==1)&&((menu==0)||(menu==2)||(menu==3))))  		
+										/*******************************************************************************/		 
+									if((sw1==1)&&(switchpress==1)&&((menu==0)||(menu == 2)||(menu==3)))  	
 									{
 														//switchpress=0;
 														counter1++;
@@ -1462,32 +1074,39 @@ void setmode(void)
 																	 check=1;
 																	 counter1=0;
 																	 switchset2=0;
-																		 if((menu==0)||(menu==2)||(menu==3))
+																		 if(menu==0)
 																		 {
 																				dec=dec+1;
 																				if(menu==0)
 																				{
-																								if(dec>200){
-																										dec=10;}
-																								tempmax=dec;
-																								DP=0;
+																								if(dec>100)
+																										dec=5;
+																								tempmax=dec;																			
 																				}
-								//												if(smode1==2)
-								//												{
-								//																if(dec>320)
-								//																		dec=231;
-								//																hvc=dec;
-								//																DP=0;
-								//												}
-								//											  if(smode1==3)
-								//												{
-								//																if(dec>230)
-								//																	dec=150;
-								//																lvc=dec;
-								//																DP=0;
-								//												}
-																				setconversion();
-																	}
+																				setconversion();//2
+																	   }
+																		 if(menu==2)
+																		 {
+																				dec=dec+1;
+																				if(menu==2)
+																				{
+																								if(dec>600)
+																										dec=150;
+																								max_vib_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+																		 if(menu==3)
+																		 {
+																				dec=dec+1;
+																				if(menu==3)
+																				{
+																								if(dec>9999)
+																										dec=0;
+																								run_time_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
 														}
 								}
 									////////////////////////////////////////////
@@ -1495,37 +1114,69 @@ void setmode(void)
 								{
 										decrement=0;
 										switchset2=0;
-										if((menu==0)||(menu==2)||(menu==3))
+										if(menu==0)
 										{
-											if(dec==0)
-													dec=1-dec;
-											if(dec>0)
-													dec=dec-1;
-											if(menu==0)
-											{
-														if(dec<10)
-																dec=200;
-														tempmax = dec;
-											}
-											//			if(smode1==2)
-											//			{
-											//				if(dec<231)
-											//				dec=320;
-											//				hvc=dec;
-											//				dp=0;
-											//			}
-											//			if(smode1==3)
-											//			{
-											//				if(dec<150)
-											//				dec=230;
-											//				lvc=dec;
-											//				dp=0;
-											//			}
-														setconversion();
-											 }
-									}
-			 }
-	  }
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==0)
+												{
+															if(dec<5)
+																	dec=100;
+															tempmax = dec;
+												}
+												
+												setconversion();//3
+										}
+										if(menu==2)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<150)
+																	dec=600;
+															max_vib_var = dec;
+												}
+												setconversion();//3
+										}
+										if(menu==3)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<0)
+																	dec=9999;
+															run_time_var = dec;
+												}
+												setconversion();//3
+										}
+								}
+					}
+	  /******************************************************************************/
+		      if((menu==1)&&(switchset1==1))
+					{
+								counter2++;
+				//			setswitch=0;
+										if((sw1==1)&&(switchpress==1)&&(menu==1)&&(counter2>25)) 
+										{
+													oil_low_level += 20;
+											
+											    if(oil_low_level>80){
+																oil_low_level = 20;
+													}
+												  setconversion();
+													counter2 = 0;
+										} 	
+					} 
+					
+		}
 }
 
 void setconversion(void)
@@ -1534,9 +1185,7 @@ void setconversion(void)
     {
         display_lcd[1]= (tempmax/100)+0x30;
         display_lcd[2]=((tempmax%100)/10)+0x30;
-      //  display_lcd[3]=((tempmax%100)%10)+0x30;
-			  display_lcd[3]=set_bit_check+0x30;
-			//    sline();
+        display_lcd[3]=((tempmax%100)%10)+0x30;
 			    chip=0;
 					enabler(0xca);//Second line 10th position
 					delay(0x01);
@@ -1548,20 +1197,60 @@ void setconversion(void)
 								delay(0x01);
 					}
     }
-		
-//    if(smode1==2)
-//    {
-//        display[1]= hvc/100;
-//        display[2]=(hvc%100)/10;
-//        display[3]=(hvc%100)%10;
-//    }
-
-//    if(smode1==3)
-//    {
-//        display[1]= lvc/100;
-//        display[2]=(lvc%100)/10;
-//        display[3]=(lvc%100)%10;
-//    }
+		if(menu==1)
+    {
+        display_lcd[1]= (oil_low_level/100)+0x30;
+        display_lcd[2]=((oil_low_level%100)/10)+0x30;
+        display_lcd[3]=((oil_low_level%100)%10)+0x30;
+			  chip=0;
+				enabler(0xcc);//Second line 12th position
+				delay(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<4;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay(0x01);
+				}
+    }
+		if(menu==2)
+    {
+        display_lcd[1]= (max_vib_var/100)+0x30;
+        display_lcd[2]=((max_vib_var%100)/10)+0x30;
+        display_lcd[3]=((max_vib_var%100)%10)+0x30;
+			  chip=0;
+				enabler(0xc8);//Second line 12th position
+				delay(0x01);
+			  chip=1;
+				temp=display_lcd[1];
+				enabler(temp);
+				delay(0x01);
+				enabler('.');
+				for(ibm=2;ibm<=3;ibm++)
+				{
+						temp=display_lcd[ibm];
+						enabler(temp);
+						delay(0x01);
+				}
+    }
+		if(menu==3)
+    {
+		    display_lcd[1] = (run_time_var/1000) + 0x30;
+        display_lcd[2] = ((run_time_var%1000)/100) + 0x30;
+        display_lcd[3] = ((run_time_var%100)/10) + 0x30;
+        display_lcd[4] = ((run_time_var%100)%10) + 0x30;
+     
+			  chip=0;
+				enabler(0xca);//Second line 10th position
+				delay(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<5;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay(0x01);
+				}
+    }
 }
 
 void switchscan(void)
@@ -1575,19 +1264,27 @@ void switchscan(void)
 		 
 	    result=resultx2/250;
 			
+			if((result>380)&&(result<450))//set/run
+			{
+						setruntime++;
+						if(setruntime>1)
+						{
+								setrun=1;
+						}
+			}
 		 	if((result>480)&&(result<530))//menukey
 			{
-				  //  sw2=1;
-	        //  sw1=0;
-						setruntime=0;
-						menutime++;
+				    sw2=1;
+	          sw1=0;
+//						setruntime=0;
+//						menutime++;
 
-						if(menutime>1)
-						{
-								setruntime=0;
-						    sw2=1;
-	              sw1=0;
-						}
+//						if(menutime>1)
+//						{
+//								setruntime=0;
+//						    sw2=1;
+//	              sw1=0;
+//						}
 			}
 			
 			if((result>680)&&(result<730))//inc key
@@ -1603,7 +1300,6 @@ void switchscan(void)
 					waitset=0;
 				  switchset=1;
           switchset2=1;
-					inctime=0;
 				  sw2=0;
 				  sw1=0;
 				  counter1=0;
@@ -1625,23 +1321,21 @@ void switchscan1(void)  //run mode
       }
 		 
 	    result=resultx2/50;
+			
 		 	if((result>380)&&(result<450))//set/run
 			{
 						setruntime++;
-						menutime=0;
-						inctime=0;
-						sidetime=0;
+						
 						if(setruntime>1)
 						{
 								setrun=1;
-								menukey=0;
-								sidekey=0;
-								inckey=0;
 						}
 			}
 			
 		  if(result>800)
 			{
+				setrun = 0;
+				setruntime = 0;
 				waitset=0;
         sw1=0;
         sw2=0;
@@ -1755,276 +1449,7 @@ void switchscan1(void)  //run mode
 }
 
 
-/*
-void keyatod(void)
-{
-	    adcal_switch();
-      result = sw_adc_result;
-			if((result>380)&&(result<450))//set/run
-			{
-						setruntime++;
-						menutime=0;
-						inctime=0;
-						sidetime=0;
-						if(setruntime>1)
-						{
-								setrun=1;
-								menukey=0;
-								sidekey=0;
-								inckey=0;
-						}
-			}
 
-			if((result>680)&&(result<730))//inc key
-			{
-					setruntime=0;
-					menutime=0;
-					sidetime=0;
-					inctime++;
-					if((inctime>1)&&(automan==1))
-					{
-							menukey=0;
-							sidekey=0;
-							inckey=1;
-							setrun=0;
-					}
-					if((inctime>100)&&(automan==0))
-					{
-								timerhigh=0;
-//								TMR0=0;
-								proximitycount=0;
-								//address=8;
-								////dualwrite();
-								count_save=0;
-								tempfaultflag=0;
-								countfaultflag=0;
-					//	faultime=fault_time;
-					//	faultflag=0;
-					//
-					}
-			}
-
-			if((result>50)&&(result<130))//sidekey
-			{
-					setruntime=0;
-					menutime=0;
-					sidetime++;
-					inctime=0;
-					if(sidetime>1)
-					{
-							setrun=0;
-							menukey=0;
-							sidekey=1;
-							inckey=0;
-					}
-			}
-
-			if((result>480)&&(result<530))//menukey
-			{
-						setruntime=0;
-						menutime++;
-						sidetime=0;
-						inctime=0;
-						if(menutime>1)
-						{
-								setruntime=0;
-								menukey=1;
-								sidekey=0;
-								inckey=0;
-						}
-			}
-
-			if(result>800)
-			{
-					setruntime=0;
-					menukey=0;
-					sidekey=0;
-					inckey=0;
-					setrun=0;
-					menutime=0;
-					sidetime=0;
-					inctime=0;
-			}
-/*if(inckey==1)
-{
-timerhigh=0;
-TMR0=0;
-proximitycount=0;
-//address=8;
-////dualwrite();
-
-			
-tempfaultflag=0;
-countfaultflag=0;
-//	faultime=fault_time;
-//	faultflag=0;
-//	faultrun=0;
-}
-
-*/
-
-/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-								o/p freq conversion routine
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-void zccheck(void)
-{
-// zerodetect=0;
-/*while(zerodetect<3)//3
-{
-IE&=~(1<<7);
-adcal1();
-//if(result2>12)
-//zerodetect=0;
-//if(result2<7)
-if(result2<7)
-zerodetect++;
-}*/   
- IE|=(1<<7);
-}
-/*void lfreq(void)
-{
-icome++;
-channel=0X0b;
-zccheck();
-T2CON|=0x01;//tmr2
-T2MOD =0x24;
-RCMP2L=0xff;//65.535ms
-RCMP2H=0xff;
-TL2=0x00;
-TH2=0x00;	
-TF0=0;
-TMOD|=0x01;//tmr0
-//TL0=0xcb;
-//TH0=0xfe;//232us
-TL0=0x55;
-TH0=0xfd;//512us
-TR0=1;
-TR2=1;
-TF0=0;
-while(!TF0);
-zccheck();
-TL0=0x55;
-TH0=0xfd;//512us
-TF0=0;	
-while(!TF0);
-zccheck();
-if(TH2<69)//54
-   TH2=69;
-if(TH2>85)//47
-   TH2=85;
-TR2=0;
-//if(TH2<64)
-  // TH2=64;
-if(ovolt<150)
-    TH2=78;
-result=TH2*256+TL2;
-resulty=result+resulty;
-if(icome>4)
-{
-    icome=0;
-result=resulty;
-//resulty=result;
-resulty=(resulty*10)/1645;//329;//478;
-fscan=resulty;
-result=50000000/result;
-frequency=result;
-resulty=0;
-/*
-if(ovolt<150)
-{
-frequency=500;
-fscan=607;
-}
-    if(fscan<547)
-    fscan=547;
- * */
-/*
-if(frequency>600||frequency<400)
-{
-   frequency=500;
-   fscan=607;
-}
- * 
-}
-if(count>=5)
-{
-    lcdinit();
-    chip=0;
-    enabler(0x80);
-    count=0;
-}
-}*/
-void lfreq(void)
-{
-icome++;
-channel=0X0b;
-zccheck();
-T2CON|=0x01;//tmr2
-T2MOD =0x24;
-RCMP2L=0xff;//65.535ms
-RCMP2H=0xff;
-TL2=0x00;
-TH2=0x00;	
-TF0=0;
-TMOD|=0x01;//tmr0
-TL0=0x54;
-TH0=0xd6;//8ms
-TR0=1;
-TR2=1;
-TF0=0;
-while(!TF0);
-zccheck();
-TL0=0x54;
-TH0=0xd6;//8ms
-TF0=0;	
-while(!TF0);
-zccheck();
-if(TH2<69)//54
-   TH2=69;
-if(TH2>85)//47
-   TH2=85;
-TR2=0;
-//if(TH2<64)
-  // TH2=64;
-//if(ovolt<150)
-    TH2=78;
-
-result=TH2*256+TL2;
-resulty=result+resulty;
-if(icome>4)
-{
-	icome=0;
-result=resulty;
-//resulty=result;
-resulty=(resulty*10)/1315;//1645;//329;//478;
-fscan=resulty;
-result=50000000/result;
-frequency=result;
-resulty=0;
-/*
-if(ovolt<150)
-{
-frequency=500;
-fscan=607;
-}
-    if(fscan<547)
-    fscan=547;
- * */
-/*
-if(frequency>600||frequency<400)
-{
-   frequency=500;
-   fscan=607;
-}*/
-}
-if(count>=5)
-{
- lcdinit();
- chip=0;
- enabler(0x80);
- count=0;
-}
-}
 /*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 								                      Aprom read& write routine
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -2186,19 +1611,6 @@ void tempandptywrite(void)
 			enabler((pr_count%10)+0x30);
 			delay(1);
 	}
-//	chip=1;
-//	
-//  enabler((result/1000)+0x30);
-//	delay(1);
-//	
-//	enabler(((result%1000)/100)+0x30);
-//	delay(1);
-//	
-//	enabler(((result%100)/10)+0x30);
-//	delay(1);
-//	
-//	enabler((result%10)+0x30);
-//	delay(1);
 
 	chip=0;
 	enabler(0x0c);
@@ -2218,11 +1630,3 @@ void delay1(int t8)
 }
 
 
-void combin(void)
-{
- //if(menu==0||menu==1)  
- {
-    buffer=digit1[1]*100+digit1[2]*10+digit1[3];//If datachange occurs buffer is storing the value,For 3-digit(Trigger timer).
- }
-
-}
