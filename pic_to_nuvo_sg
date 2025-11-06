@@ -1,0 +1,1214 @@
+#include "MS51_32K.h"
+#include <math.h>
+
+#define 	chip  	P04  //rs pin
+#define 	enab 		P10  //e pin
+#define   ddata   P16
+
+sbit dclock=P2^1;
+sbit PROXIMITY_SENSOR = P1^1;
+
+//#define    ENABLE1_ADC_CH10       P22_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0A;AINDIDS1=0;AINDIDS1|=0x04;ADCCON1|=0x31;//input section
+//#define    ENABLE1_ADC_CH11       P23_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0B;AINDIDS1=0;AINDIDS1|=0x08;ADCCON1|=0x31;//output section
+#define    ENABLE1_ADC_CH12       P24_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0C;AINDIDS1=0;AINDIDS1|=0x10;ADCCON1|=0x31;//CT section
+#define    ENABLE1_ADC_CH15       P25_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0F;AINDIDS1=0;AINDIDS1|=0x80;ADCCON1|=0x31;//switch
+
+#define dp '.'
+#define hi '-'
+#define ha '/'
+#define ac ':'
+#define nu ' ' 
+#define ast '*'
+#define ca 'A'
+#define cb 'B'
+#define cc 'C'
+#define cd 'D'
+#define ce 'E'
+#define cf 'F'
+#define cg 'G'
+#define ch 'H'
+#define ci 'I'
+#define cj 'J'
+#define ck 'K'
+#define cl 'L'
+#define cm 'M'
+#define cn 'N' 
+#define co 'O' 
+#define cp 'P' 
+#define cq 'Q'
+#define cr 'R'
+#define cs 'S'
+#define ct 'T'
+#define cu 'U'
+#define cv 'V' 
+#define cw 'W'
+#define cx 'X' 
+#define cy 'Y'
+#define cz 'Z' 
+#define da '0'
+#define db '1'
+#define dc '2'
+#define dd '3'
+#define de '5'
+#define di '6'
+#define df '7'
+#define dg '8'
+#define dp '.'
+
+#define sa 'a'
+#define sb 'b'
+#define sc 'c'
+#define sd 'd'
+#define se 'e'
+#define sf 'f'
+#define sg 'g'
+#define sh 'h'
+#define si 'i'
+#define sj 'j'
+#define sk 'k'
+#define sl 'l'
+#define sm 'm'
+#define sn 'n' 
+#define so 'o'
+#define sp 'p' 
+#define sq 'q'
+#define sr 'r'
+#define ss 's'
+#define st 't'
+#define su 'u'
+#define sv 'v' 
+#define sw 'w'
+#define sx 'x' 
+#define sy 'y'
+#define sz 'z'
+
+/*------------------------------------------------------------------------------
+							lcd initialisation values routine
+-------------------------------------------------------------------------------*/
+//xdata const char init2[]={0x38,0xa0,0x38,0x0a,0x08,0x0a,0x01,0x0a,0x06,0x0a,0x0f,0x0a,0x80,0x0a,0x01,0x0a};
+xdata const char init2[]={0x33,0x01,0x32,0x01,0x28,0x0A,0x0f,0x01,0x01,0x05,0x06,0x01,0x80,0x01,0x80,0x01,0x01,0x00};
+//menu mode strings
+xdata const char temp_maximum[] = { nu, cm, ca, cx, hi, ct, ce, cm, cp, ac, nu, nu, nu, cc, nu, nu};
+xdata const char oil_lowlvl[] = { co, ci, cl, nu, cl, co, cw, hi, cl, cv, cl, ac, nu, nu, nu, '%' };
+xdata const char max_vib[] = { cm, ca, cx, hi, cv, ci, cb, ac, nu, nu, nu, nu, sm, sm, ha, ss };
+xdata const char run_time[] = { nu, cr, cu, cn, hi, ct, ci, cm, ce, ac, nu, nu, nu, nu, nu, nu };
+//run mode strings
+xdata const char machine_status[] = { nu, cm, ca, cc, ch, ci, cn, ce, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char machine_line2[] = { ch, ac, nu, nu, nu, nu, nu, cv, ac, nu, nu, nu, sm, sm, ha, ss };
+xdata const char coolant_status[] = { nu, cc, co, co, cl, ca, cn, ct, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char coolant_line2[] = { ct, cm, cp, ac, nu, nu, cc, nu, cl, cv, cl, ac, nu, nu, nu, '%'};
+//set mode display
+xdata const char set_mode_str[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};//Set mode
+
+/*-------------------------------------------------------------
+                Global Variable Declarations
+-------------------------------------------------------------*/
+
+xdata char automan = 0, swrelease = 0, setrun = 0, ibm = 0;
+xdata char menu = 0, menu_change = 0, menu1 = 0, k = 0;
+xdata char setruntime = 0, menutime = 0, setswitch = 0, setreset = 0;
+xdata char check = 0, decrement = 0, scan = 0, memsave = 0;
+xdata char memsave1 = 0, loop = 0, lcome = 0, reg = 0;
+xdata char reg7 = 0, temp = 0, icome = 0, t3 = 0;
+
+xdata unsigned char switchpress = 0, sw1 = 0, sw2 = 0, highbyte = 0;
+xdata unsigned char lowbyte = 0, waitset = 0, set_bit_check = 0, rdata = 0;
+xdata unsigned char display_lcd[5] = {0};
+
+xdata uint16_t temp_adc_result = 0, sw_adc_result = 0;
+xdata unsigned int tempResult = 0, adcResult = 0, buffer = 0, result = 0;
+xdata unsigned int result1 = 0, tempmax = 0, oil_low_level = 0, max_vib_var = 0;
+xdata unsigned int run_time_var = 0, duty = 0, readrom = 0, doad = 0;
+xdata unsigned int switchset = 0, switchset1 = 0, switchset2 = 0;
+xdata unsigned int swactive = 0;
+
+xdata int msec = 0, pr_count = 0;
+xdata unsigned int counter = 0, counter1 = 0, counter2 = 0, counter3 = 0;
+xdata unsigned int counter4 = 0, counttime = 0, counttime1 = 0, counttime2 = 0;
+xdata unsigned int counttime4 = 0, displaycount = 0, switchdisp = 0, dec = 0;
+xdata unsigned int loop2 = 0, income2 = 0;
+
+volatile unsigned char xdata page_buffer[128] = {0};
+xdata unsigned int settings[32] = {0};
+
+char bm4= 4;
+xdata unsigned char data_t = 0;
+xdata unsigned char data1 = 0;
+
+xdata unsigned long tempResultAverage = 0, resultx2 = 0;
+volatile unsigned int r1 = 0, r2 = 0, r3 = 0;
+unsigned char temperature1 = 0;
+double tempResistance = 0;
+unsigned int iterator = 0;
+
+xdata char screen_page = 0;    
+bit current_state = 0, last_state = 0;
+bit BIT_TMP = 0;
+
+void set_clock_source(void);
+//void set_clock_division_factor(unsigned char value);
+void init(void);
+void portinit(void);
+void enabler(char t4);
+void delay_t0(char gg);
+void timer_init(void);
+void lcdinit(void);
+void switchscan1(void);
+void tempandptywrite(void);
+void adrcal(void);
+void adcal_temp(void);
+void tempScan(void);
+int adcScan_temp(void);
+void adcal_switch(void);
+void adcal(void);
+void adc_init(void);
+void adcal1(void);
+void switchscan(void);
+void setconversion(void);
+void setmode(void);
+void display(void);
+void display2(void);
+void sline(void);
+void fline(void);
+void delay1(int t8);
+void dataread(void);
+void FlashWrite(void);
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr);
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData);
+void main()
+{
+		init();
+		delay_t0(100);
+		lcdinit();
+		automan=0;
+		while(1)
+		{
+    	  if(automan==0)
+			  {
+							chip=0;
+							enabler(0x01);
+							menu=0;
+					    sw2=1;
+							display();
+				}
+				while(automan==0)//Run mode.
+				{
+						switchscan1();
+	         // switchscan();
+					  tempScan();
+						if(displaycount>30)
+						{
+							  screen_page=!screen_page;
+					      display();
+							  tempandptywrite();
+								displaycount=0;
+						}	
+				}
+				
+
+				if(automan==1)
+				{
+							chip=0;
+							enabler(0x01);
+							menu=0;
+							sw2=1;									
+					    display2();
+				}
+				while(automan==1)
+				{
+//								     sline();
+//							    	 enabler('K');
+//								     switchscan1();
+						switchscan();
+						if((menu_change!=0)&&(menu1==0))
+						{
+								display2();
+								menu1=1;
+						}
+						setmode();
+			 }
+     }
+}
+
+void delay(char t1)
+{
+  for(r1=0;r1<t1;r1++)
+	{
+	  for(r2=0;r2<60;r2++)
+		{
+				for(r3=0;r3<5;r3++);
+		}
+	}
+}
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						   interrupt service routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void Timer_ISR (void) interrupt 16
+{
+	      T3CON &= ~(1 << 4);   // Clear TF3 (bit4)
+ 
+	      msec++;
+        if (msec > 100)
+        {
+            msec = 0;
+            displaycount++;
+        }
+				      
+				if(setrun==0)//SET/RUN press.
+				{
+						 swactive=0;
+						 swrelease=0;
+				}
+
+				if(setrun==1&&swrelease==0)//SET/RUN, when pressed becomes==0 and to enter swrelease==0.
+				{
+						 swactive++;
+						 if(swactive>300)//3sec
+						 {
+									swrelease=1;//To exit to \() for running the loop after change of state of automan, swrelease state is changed.
+									swactive=0;
+									automan=!automan;//Here the change of state of setting or running mode occurs
+						 } 
+				}
+				
+			  current_state = PROXIMITY_SENSOR;   // live read
+
+				if (current_state == 1 && last_state == 0)
+				{
+						pr_count++;
+						if (pr_count > 90)
+								pr_count = 0;
+				}
+
+				last_state = current_state;		
+
+}
+
+//----------------------------------------------------
+// ADC Initialization
+//----------------------------------------------------
+void adc_init(void)
+{
+    P24_INPUT_MODE;
+    P25_INPUT_MODE;
+    SFRS = 0;
+    ADCCON1 &= 0xCF;
+    ADCCON1 |= (4 << 4);   // ADC clock = Fsys / 16
+
+    SFRS = 2;
+    ENABLE1_ADC_CH12;      // Enable analog input on P2.4 (Channel 12)
+  	ENABLE1_ADC_CH15;
+//  p3.2 related enable
+    SFRS = 0;
+}
+
+//----------------------------------------------------
+// ADC Conversion Function (uses global 'channel')
+//----------------------------------------------------
+void adcal_temp(void)
+{
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x0f;       // Select current channel (0x0C or 0x0F)p3.5
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    temp_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    temp_adc_result = temp_adc_result >> 2;                    // Convert to 10-bit
+}
+
+void adcal_switch(void)
+{
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x0C;          // Select current channel (0x0C or 0x0F)
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    sw_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    sw_adc_result = sw_adc_result >> 2;                    // Convert to 10-bit
+}
+
+//----------------------------------------------------
+// ADC Scan (averaging one channel)
+//----------------------------------------------------
+int adcScan_temp(void)
+{
+    tempResultAverage = 0;
+    adcResult = 0;
+    for (iterator = 0; iterator < 400; iterator++)
+    {
+        adcal_temp();                     // Perform one ADC read
+        adcResult = temp_adc_result;
+        tempResultAverage += adcResult;
+    }
+
+    return (tempResultAverage / 400); // Return averaged value
+}
+
+void tempScan(void)
+{
+		delay_t0(14);
+	
+	  tempResult = adcScan_temp();
+	
+		tempResistance = 10000 * (tempResult/(1023.0 - tempResult));
+
+		//formula T =  1/(1/T0 + 1/B*ln(R/R0)) ; R - resistance of temperature sensor
+		// 1/T0 = 1/298.15 = 0.00315; B = 3950;R0 = 10000; T in celcius = T - 273.15
+		//converting from kelvin to celsious,so subtracting with 273.15
+		temperature1 = (1/(0.00335 + ((1/3950.0)*log(tempResistance/10000))) - 273.15);
+
+		if(temperature1 >= 190)//If thermistor is not present
+		{
+			temperature1 = 0;
+		}
+}
+
+void set_clock_source(void)
+{
+	set_CKEN_HIRCEN;         
+  while((CKSWT & SET_BIT5) == 0);
+}
+
+//void set_clock_division_factor(unsigned char value){CKDIV = value;}
+
+void timer_init(void)
+{
+	T3CON=0x04;
+	RL3=0x18;
+	RH3=0xFC;
+	EIE1=0x02;
+	IE |=0x80;
+	T3CON|=(1<<3);
+}
+
+void portinit(void)
+{
+	dclock=0;   //p2.1
+	ddata=0;    //p1.6 
+	
+	   //lcd pins
+	SFRS=0;
+	P0M1&=0x00;
+	P0M2|=0xFF;
+	P0=0x00;
+  //rs,in&out rly,triac ,led driver.
+	SFRS=0;
+	P1M1&=0x00;
+	P1M2|=0x5F;
+	P1=0x00;
+	
+	P1M1 |= 0x02;   // bit1 = 1 ? input mode
+	P1M2 &= ~0x02;  // bit1 = 0
+
+	 //mclr,led driver, in& out selection,ct& switch
+	SFRS=2;
+	P2M1|=0x3c;
+	P2M1&=~(1<<1);
+	P2M2|=0x02;
+	P2=0x00;
+
+	//enable& buzzer
+	SFRS=0;
+	P3M1&=0x00;
+	P3M2|=0x28;
+	P3=0x00;
+}
+
+void init(void)
+{
+ set_clock_source();
+ portinit();
+ timer_init();
+ adc_init();
+}
+/*
+void enabler1(char ladr,char ldata)
+{
+    chip=0;
+    enabler(ladr);
+    delay_t0(2);
+    chip=1;
+    enabler(ldata);
+    delay_t0(2);
+}
+*/
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						    main routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void lcdinit(void)
+{
+    reg = 0;
+    chip = 0;
+    while(reg < 15)
+    {
+        reg7 = init2[reg];
+
+        // For the first few init entries we must use longer delays and special timing.
+        // Set bm4 = 1 for those early steps (matches your previous intent).
+        if(reg < 4)
+            bm4 = 1;
+        else
+            bm4 = 0;
+
+        enabler(reg7);
+        reg++;
+        if(reg == 14)
+            return;
+        reg7 = init2[reg];
+        delay_t0(reg7);
+        reg++;
+    }
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								enable routine	
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void enabler(char t4)
+{
+    unsigned char data1_local;
+
+    // Prepare preserved upper nibble including RS bit according to 'chip'
+    data1_local = P0 & 0xF0;         // preserve upper nibble
+    if(chip)
+        data1_local = (data1_local & 0xEF) | 0x10; // ensure P0.4 = 1
+    else
+        data1_local = data1_local & 0xEF;         // ensure P0.4 = 0
+
+    // --- send high nibble ---
+    enab = 1;
+    data_t = (t4 & 0xF0) >> 4;       // high nibble to lower 4 bits
+    data_t = (data_t & 0x0F) | data1_local;
+    P0 = data_t;
+    for(r3 = 0; r3 < 100; r3++);
+    enab = 0;
+
+    if(bm4 == 1)
+    {
+        for(r1 = 0; r1 < 50; r1++)
+            for(r3 = 0; r3 < 100; r3++);
+    }
+
+    // small gap before low nibble
+    enab = 1;
+    for(r3 = 0; r3 < 100; r3++);
+
+    // --- send low nibble ---
+    data_t = t4 & 0x0F;              // low nibble stays in lower 4 bits
+    data_t = (data_t & 0x0F) | data1_local;
+    P0 = data_t;
+    enab = 0;
+
+    if(bm4 == 1)
+    {
+        for(r1 = 0; r1 < 50; r1++)
+            for(r3 = 0; r3 < 100; r3++);
+    }
+
+    for(r3 = 0; r3 < 100; r3++);
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											split routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void delay_t0(char gg)
+{
+	  TMOD|=0x01;
+	  TH0=0xfe;
+		TL0=0xf5;//200us
+	  TR0=1;
+    for(k=0;k<gg;k++)
+    {
+			TH0=0xfe;
+			TL0=0xf5;//200us
+			TF0=0;
+			while(TF0==0);
+    }
+		TR0=0;
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											set volt routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void fline(void)
+{
+		chip=0;
+		enabler(0x80);
+		delay_t0(2);
+		chip=1;
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											main routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void sline(void)
+{
+		chip=0;
+		enabler(0xc0);
+		delay_t0(1);
+		chip=1;
+}
+
+/*****************************************Main Display*****************************************************/
+void display(void)
+{
+	        if(screen_page == 0)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+										temp = machine_status[t3];
+										enabler(temp);
+										delay_t0(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+										temp = machine_line2[t3]; 
+										enabler(temp);
+										delay_t0(5);
+
+								}
+					}
+					if(screen_page == 1)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//							temp=temperaturestring[t3];//Live Temperature
+										temp = coolant_status[t3];
+										enabler(temp);
+										delay_t0(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//		        temp=proximitystring[t3];//Live Count.
+										temp = coolant_line2[t3]; 
+										enabler(temp);
+										delay_t0(5);
+
+								}
+					}
+
+					chip=0;
+					enabler(0x0c);
+					delay_t0(0x01);
+}
+
+void display2(void)
+{
+			fline();
+			chip=1;
+			for(t3=0;t3<16;t3++)
+			{
+					temp=set_mode_str[t3];//SET mode
+					enabler(temp);
+					delay_t0(1);
+			}
+			/**************************************MENU SELECTION***********************************************/
+			sline();
+			for(t3=0;t3<16;t3++)
+			{
+					if(menu==0)//Temperature max display.
+							temp=temp_maximum[t3];
+					if(menu==1)//oil level display.
+							temp=oil_lowlvl[t3];
+					if(menu==2)
+							temp=max_vib[t3];
+					if(menu==3)
+							temp=run_time[t3];
+					enabler(temp);
+					delay_t0(5);
+			}
+			/***********************Digits displaying**************************************************/
+			setconversion();
+			chip=0;
+			enabler(0x0c);
+			delay_t0(0x01);
+}
+
+void setmode(void)
+{
+    switchscan();
+	  switchscan1();
+	  switchset1=1;
+		if(waitset==0)
+		{	
+			    if(((sw2==1)&&(automan==1)&&(setswitch==0)&&(menu<=3)))  //menu switch for setting temp,oil level etc.,
+					{
+												    counter++;	 
+											      if((counter>25)&&(automan==1)&&(switchset==1))
+														{
+																	counter=0;
+																	switchset=0;
+																	switchset1=1;
+																	menu = menu + 1;
+																	if(menu>3)
+																			menu=0;
+																	display2();
+														//     if(memsave1==1)
+														//     {
+														//      memsave=1;
+														//      memsave1=0;
+														//    }
+														//							if((menu==0)||(menu==1)||(menu==2)||(menu==3))
+														//							{
+														//										counter4=80;
+														//							}
+													}
+					}
+/*******************************************************************************************/					
+					if(((menu==0)||(menu==2)||(menu == 3))&&(switchset1==1))
+					{    
+						
+											counter2++;
+										//	if(counter2<counter4)
+										//	{
+										//		      tempmax = 455;
+										//					setswitch=1;
+										//					if(menu==0)
+										//					{
+															//		display_lcd[1]=0;
+															//		display_lcd[2]=20;
+															//		display_lcd[3]=19;
+										//					}
+										//	}				
+												if((counter2>counter4))
+												{
+		
+														setswitch=0;
+														if(menu==0)
+														{
+															dec=tempmax;
+															if(dec>100)
+																	dec=5;													
+														}
+										        if(menu==2)
+														{
+															dec=max_vib_var;
+															if(dec>600)
+																	dec=150;													
+														}
+														if(menu==3)
+														{
+															dec=run_time_var;
+															if(dec>9999)
+																	dec=0;													
+														}
+														setconversion();//1
+							//							switchset1=0;
+														counter2=0;
+														switchpress=1;
+												}
+							//	}
+										/*******************************************************************************/		 
+									if((sw1==1)&&(switchpress==1)&&((menu==0)||(menu == 2)||(menu==3)))  	
+									{
+														//switchpress=0;
+														counter1++;
+														setreset=0;
+														
+														if(counter1>100)
+														{
+														//memsave1=1;
+																counttime4=1;
+																counter1=0;
+														}
+														
+														if((counttime4==1)&&(check==1))
+														{
+																	counter3=counter3-5;
+																	check=0;
+																	if(counter3<=5)
+																	{
+																			counter3=5;
+																	}
+														}
+														
+														if((counter1>20)&&(switchset2==1)&&(counttime4==0))
+														{
+															//		memsave1=1;
+																	counter1=0;
+																	switchset2=0;
+																	decrement=1;
+														}
+														
+														if((counter1>counter3)&&(counttime4==1))
+														{
+																	 decrement=0;
+																	 check=1;
+																	 counter1=0;
+																	 switchset2=0;
+																		 if(menu==0)
+																		 {
+																				dec=dec+1;
+																				if(menu==0)
+																				{
+																								if(dec>100)
+																										dec=5;
+																								tempmax=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+																		 if(menu==2)
+																		 {
+																				dec=dec+1;
+																				if(menu==2)
+																				{
+																								if(dec>600)
+																										dec=150;
+																								max_vib_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+																		 if(menu==3)
+																		 {
+																				dec=dec+1;
+																				if(menu==3)
+																				{
+																								if(dec>9999)
+																										dec=0;
+																								run_time_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+														}
+								}
+									////////////////////////////////////////////
+								if((decrement==1)&&(switchset2==1))
+								{
+										decrement=0;
+										switchset2=0;
+										if(menu==0)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==0)
+												{
+															if(dec<5)
+																	dec=100;
+															tempmax = dec;
+												}
+												
+												setconversion();//3
+										}
+										if(menu==2)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<150)
+																	dec=600;
+															max_vib_var = dec;
+												}
+												setconversion();//3
+										}
+										if(menu==3)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<0)
+																	dec=9999;
+															run_time_var = dec;
+												}
+												setconversion();//3
+										}
+								}
+					}
+	  /******************************************************************************/
+		      if((menu==1)&&(switchset1==1))
+					{
+								counter2++;
+				//			setswitch=0;
+										if((sw1==1)&&(switchpress==1)&&(menu==1)&&(counter2>25)) 
+										{
+													oil_low_level += 20;
+											
+											    if(oil_low_level>80){
+																oil_low_level = 20;
+													}
+												  setconversion();
+													counter2 = 0;
+										} 	
+					} 
+					
+		}
+}
+
+void setconversion(void)
+{
+    if(menu==0)
+    {
+        display_lcd[1]= (tempmax/100)+0x30;
+        display_lcd[2]=((tempmax%100)/10)+0x30;
+        display_lcd[3]=((tempmax%100)%10)+0x30;
+			    chip=0;
+					enabler(0xca);//Second line 10th position
+					delay_t0(0x01);
+			    chip=1;
+		      for(ibm=1;ibm<4;ibm++)
+					{
+								temp=display_lcd[ibm];
+								enabler(temp);
+								delay_t0(0x01);
+					}
+    }
+		if(menu==1)
+    {
+        display_lcd[1]= (oil_low_level/100)+0x30;
+        display_lcd[2]=((oil_low_level%100)/10)+0x30;
+        display_lcd[3]=((oil_low_level%100)%10)+0x30;
+			  chip=0;
+				enabler(0xcc);//Second line 12th position
+				delay_t0(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<4;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay_t0(0x01);
+				}
+    }
+		if(menu==2)
+    {
+        display_lcd[1]= (max_vib_var/100)+0x30;
+        display_lcd[2]=((max_vib_var%100)/10)+0x30;
+        display_lcd[3]=((max_vib_var%100)%10)+0x30;
+			  chip=0;
+				enabler(0xc8);//Second line 12th position
+				delay_t0(0x01);
+			  chip=1;
+				temp=display_lcd[1];
+				enabler(temp);
+				delay_t0(0x01);
+				enabler('.');
+				for(ibm=2;ibm<=3;ibm++)
+				{
+						temp=display_lcd[ibm];
+						enabler(temp);
+						delay_t0(0x01);
+				}
+    }
+		if(menu==3)
+    {
+		    display_lcd[1] = (run_time_var/1000) + 0x30;
+        display_lcd[2] = ((run_time_var%1000)/100) + 0x30;
+        display_lcd[3] = ((run_time_var%100)/10) + 0x30;
+        display_lcd[4] = ((run_time_var%100)%10) + 0x30;
+     
+			  chip=0;
+				enabler(0xca);//Second line 10th position
+				delay_t0(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<5;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay_t0(0x01);
+				}
+    }
+}
+
+void switchscan(void)
+{
+		  resultx2=0;
+      for(scan=0;scan<250;scan++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/250;
+			
+			if((result>200)&&(result<280))//set/run --BOTH BUTTON PRESS
+			{
+						setruntime++;
+						if(setruntime>1)
+						{
+								setrun=1;
+						}
+			}
+		 	if((result>295)&&(result<350)) //SW1 PRESS..THIS SW1 IS BASED ON SHANTHI GEARS BOARD
+			{
+				    sw2=1;  ///THIS IS THE WORKING OLD LOGIC SW1 AND SW2. 
+	          sw1=0;
+//						setruntime=0;
+//						menutime++;
+
+//						if(menutime>1)
+//						{
+//								setruntime=0;
+//						    sw2=1;
+//	              sw1=0;
+//						}
+			}
+			
+			if((result>470)&&(result<550))//inc key //SW2 PRESS
+			{
+				   sw1=1;
+           sw2=0;
+			}
+			
+		  if(result>800)
+			{
+					setruntime=0;
+					setrun=0;
+					waitset=0;
+				  switchset=1;
+          switchset2=1;
+				  sw2=0;
+				  sw1=0;
+				  counter1=0;
+          counter3=50;
+          counttime2=5;
+          counttime=0;
+          counttime4=0;
+          counttime1=2;
+			}
+}	
+
+void switchscan1(void)  //run mode
+{
+		  resultx2=0;
+      for(scan=0;scan<50;scan++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/50;
+			
+		 	if((result>200)&&(result<280))//set/run
+			{
+						setruntime++;
+						
+						if(setruntime>1)
+						{
+								setrun=1;
+						}
+			}
+			
+		  if(result>800)
+			{
+				setrun = 0;
+				setruntime = 0;
+				waitset=0;
+        sw1=0;
+        sw2=0;
+        switchset=1;
+        switchset2=1;
+        counter1=0;
+        counter3=50;
+        counttime2=5;
+        counttime=0;
+        counttime4=0;
+        counttime1=2;
+        switchdisp=0;	
+			}
+}
+
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								                      Aprom read& write routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr)
+{
+    rdata = *u16_addr >> 8;
+    return rdata;
+}
+
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
+{
+    unsigned char looptmp = 0;
+    unsigned int u16_addrl_r;
+    unsigned int RAMtmp;
+
+    //Check page start address
+    u16_addrl_r = (u16EPAddr / 128) * 128;
+
+    //Save APROM data to XRAM0
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        RAMtmp = Read_APROM_BYTE((unsigned int code *)(u16_addrl_r + looptmp));
+        page_buffer[looptmp] = RAMtmp;
+    }
+
+    // Modify customer data in XRAM
+    page_buffer[u16EPAddr & 0x7f] = u8EPData;
+
+    //Erase APROM DATAFLASH page
+    IAPAL = u16_addrl_r & 0xff;
+    IAPAH = (u16_addrl_r >> 8) & 0xff;
+    IAPFD = 0xFF;
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x22;
+    set_IAPTRG_IAPGO;
+
+    //Save changed RAM data to APROM DATAFLASH
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x21;
+
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        IAPAL = (u16_addrl_r & 0xff) + looptmp;
+        IAPAH = (u16_addrl_r >> 8) & 0xff;
+        IAPFD = page_buffer[looptmp];
+        set_IAPTRG_IAPGO;
+    }
+
+    clr_IAPUEN_APUEN;
+    clr_CHPCON_IAPEN;
+}
+
+void FlashWrite(void)
+{
+	IE&=~(1<<7);
+	for(loop=1,loop2=1;loop<32,loop2<61;loop++,loop2+=2)
+	{
+				 highbyte=((settings[loop]&(0xFF00))>>8);
+				 lowbyte=(settings[loop]&(0x00FF));
+				 Write_DATAFLASH_BYTE(16800+loop2,highbyte);
+				 Write_DATAFLASH_BYTE(16800+loop2+1,lowbyte);
+	}
+	IE|=(1<<7);
+}
+
+void dataread(void)
+{
+	IE&=~(1<<7);
+ for(lcome=1,income2=1;lcome<32,income2<61;lcome++,income2+=2)
+    {
+       
+           Read_APROM_BYTE(16800+income2);
+			         highbyte=rdata;
+			     Read_APROM_BYTE(16800+income2+1);
+			       lowbyte=rdata;
+			 settings[lcome]=((highbyte<<8)|(lowbyte));
+     //   if(settings[lcome]>9999)
+       //     settings[lcome]=0;
+      }
+    for(lcome=15;lcome<18;lcome++)
+    {
+    if(settings[lcome]!=2)
+       settings[lcome]=1;
+    }
+		for(lcome=19;lcome<32;lcome++)
+    {
+    if(settings[lcome]>=65530)
+       settings[lcome]=0;
+    }
+	  	IE|=(1<<7);
+		  if(settings[1]>=65530)//setvolt
+			settings[1]=200;
+			if(settings[2]>=65530)//sens
+			settings[2]=3;
+			if(settings[3]>=65530)//ophihgh
+			settings[3]=255;
+			if(settings[4]>=65530)//oplow
+			settings[4]=170;
+			if(settings[5]>=65530)//iphigh
+			settings[5]=280;
+			if(settings[6]>=65530)//iplow
+			settings[6]=170;
+			if(settings[7]>=65530)//ctfact
+			settings[7]=174;                                           
+			if(settings[8]>=65530)//ovl
+			settings[8]=35;
+			if(settings[9]>=65530)//icut
+			settings[9]=3;
+			if(settings[10]>=65530)//vcut
+			settings[10]=3;
+			if(settings[11]>=65530)//on delay_t0
+			settings[11]=3;
+			if(settings[18]>=65530)//on delay_t0
+			settings[18]=0;
+
+}
+
+void tempandptywrite(void)
+{
+
+	if(screen_page == 1)
+	{
+				sline();
+		    chip=0;
+				enabler(0xC4);
+				delay_t0(5);
+
+				chip=1;
+				//enabler((temperature1/100)+0x30);
+				//delay_t0(2);
+				
+				enabler(((temperature1%100)/10)+0x30);
+				delay_t0(2);
+
+				enabler((temperature1%10)+0x30);
+				delay_t0(2);
+	}
+	if(!screen_page)
+	{
+		  sline();
+			chip=0;
+			enabler(0xc2);
+			delay_t0(1);
+
+			chip=1;
+		
+			enabler((pr_count/1000)+0x30);
+			delay_t0(1);
+		
+	  	enabler(((pr_count%1000)/100)+0x30);
+			delay_t0(1);
+			
+			enabler(((pr_count%100)/10)+0x30);
+			delay_t0(1);
+
+			enabler((pr_count%10)+0x30);
+			delay_t0(1);
+	}
+
+	chip=0;
+	enabler(0x0c);
+	delay_t0(0x01);
+
+}
+
+/*
+void delay1(int t8)
+{
+	for(r1=0;r1<t8;r1++)
+	{
+		for(r2=0;r2<250;r2++)
+		{
+			for(r3=0;r3<250;r3++);
+		}
+	}
+}
+*/
+
