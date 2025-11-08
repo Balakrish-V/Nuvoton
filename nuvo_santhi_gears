@@ -1,0 +1,2664 @@
+#include "MS51_32K.h"
+#include <math.h>
+
+#define 	chip  	P04  //rs pin
+#define 	enab 		P10  //e pin
+
+sbit PROXIMITY_SENSOR = P0^5;
+sbit P22 = P2^2;
+
+#define    ENABLE1_ADC_CH9        P21_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x09;SFRS=2;AINDIDS1=0;AINDIDS1|=0x02;SFRS=0;ADCCON1|=0x01
+//#define    ENABLE1_ADC_CH10       P22_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0A;AINDIDS1=0;AINDIDS1|=0x04;ADCCON1|=0x31;//input section
+//#define    ENABLE1_ADC_CH11       P23_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0B;AINDIDS1=0;AINDIDS1|=0x08;ADCCON1|=0x31;//output section
+#define    ENABLE1_ADC_CH12       P24_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0C;AINDIDS1=0;AINDIDS1|=0x10;ADCCON1|=0x31;//CT section
+#define    ENABLE1_ADC_CH15       P25_INPUT_MODE;SFRS=0;ADCCON0&=0x30;ADCCON0|=0x0F;AINDIDS1=0;AINDIDS1|=0x80;ADCCON1|=0x31;//switch
+
+/*Timer*/
+#define DELAY_UNIT_MS   1       /* Delay unit in milliseconds for short delays */
+#define DELAY_UNIT_SEC  2       /* Delay unit in seconds for longer delays     */
+/*Timer*/
+
+#define  HIRC_16        7
+
+/*spi*/
+#define SPI_2MBPS       2       /* SPI communication at 2 Megabits per second - fastest speed */
+#define SPI_1MBPS       1       /* SPI communication at 1 Megabit per second - medium speed */
+#define SPI_500KBPS     5       /* SPI communication at 500 Kilobits per second - slower but more reliable */
+
+#define SPI_MODE0       0       /* Clock idle low, data sampled on rising edge */
+#define SPI_MODE1       1       /* Clock idle low, data sampled on falling edge */
+#define SPI_MODE2       2       /* Clock idle high, data sampled on rising edge */
+#define SPI_MODE3       3       /* Clock idle high, data sampled on falling edge */
+/*spi*/
+
+/*LED*/
+typedef enum {
+    LED_OFF = 0,        /* Turn LED completely off */
+    LED_ON,             /* Turn LED completely on */
+    LED_TOGGLE          /* Switch LED state (on->off or off->on) */
+} led_action_t;
+/*LED*/
+
+
+/*W5500 Related*/
+#define TIMEOUT_WIZNET_RESET      8000    /* Hardware reset completion timeout */
+#define TIMEOUT_SOCKET_OPEN       1000    /* Socket open operation timeout */
+#define TIMEOUT_SOCKET_CONNECT    2000    /* TCP connection establishment timeout */
+#define TIMEOUT_SOCKET_CLOSE      1000    /* Socket close operation timeout */
+#define TIMEOUT_SOCKET_DISCON     2000    /* TCP disconnection timeout */
+#define TIMEOUT_SPI_TRANSMIT      100     /* SPI data transmission timeout */
+#define TIMEOUT_SPI_RECEIVE       100     /* SPI data reception timeout */
+
+#define NUM_OF_WIZNETS 1      /* Number of Wiznet chips in system */
+#define NUM_OF_SOCKETS 8      /* Number of sockets per Wiznet chip */
+
+#define RWB 2                 /* Read/Write Bit position in Control Phase */
+
+/* Byte order conversion */
+#define SWAP_TWO_BYTES(X) ((((X) & 0xFF00) >> 8) | (((X) & 0x00FF) << 8))
+
+#define COMMON_REGISTERS       0x00
+#define SOCKET_0_REGISTERS     0x01
+#define SOCKET_0_TX_BUFFER     0x02
+#define SOCKET_0_RX_BUFFER     0x03
+#define SOCKET_1_REGISTERS     0x05
+#define SOCKET_1_TX_BUFFER     0x06
+#define SOCKET_1_RX_BUFFER     0x07
+#define SOCKET_2_REGISTERS     0x09
+#define SOCKET_2_TX_BUFFER     0x0A
+#define SOCKET_2_RX_BUFFER     0x0B
+#define SOCKET_3_REGISTERS     0x0D
+#define SOCKET_3_TX_BUFFER     0x0E
+#define SOCKET_3_RX_BUFFER     0x0F
+#define SOCKET_4_REGISTERS     0x11
+#define SOCKET_4_TX_BUFFER     0x12
+#define SOCKET_4_RX_BUFFER     0x13
+#define SOCKET_5_REGISTERS     0x15
+#define SOCKET_5_TX_BUFFER     0x16
+#define SOCKET_5_RX_BUFFER     0x17
+#define SOCKET_6_REGISTERS     0x19
+#define SOCKET_6_TX_BUFFER     0x1A
+#define SOCKET_6_RX_BUFFER     0x1B
+#define SOCKET_7_REGISTERS     0x1D
+#define SOCKET_7_TX_BUFFER     0x1E
+#define SOCKET_7_RX_BUFFER     0x1F
+
+#define MR       0x0000
+#define PHYCFGR  0x002E
+#define VERSIONR 0x0039
+
+#define GAR   0x0001
+#define SUBR  0x0005
+#define SHAR  0x0009
+#define SIPR  0x000F
+
+#define INTLEVEL 0x0013
+#define IR       0x0015
+#define IMR      0x0016
+#define SIR      0x0017
+#define SIMR     0x0018
+#define RTR0     0x0019
+#define RTR1     0x001A
+#define RCR      0x001B
+
+#define PHYCFGR_RST 7
+#define LNK         0
+
+#define Sn_MR      0x0000
+#define Sn_CR      0x0001
+#define Sn_IR      0x0002
+#define Sn_SR      0x0003
+#define Sn_IMR     0x002C
+#define Sn_PORT    0x0004
+#define Sn_DHAR    0x0006
+#define Sn_DIPR    0x000C
+#define Sn_DPORT   0x0010
+#define Sn_MSSR    0x0012
+#define Sn_KPALVTR 0x002F
+#define Sn_TX_FSR  0x0020
+#define Sn_TX_RD   0x0022
+#define Sn_TX_WR   0x0024
+#define Sn_RX_RSR  0x0026
+#define Sn_RX_RD   0x0028
+#define Sn_RX_WR   0x002A
+
+#define KA_DISABLE 0x00
+#define KA_5SEC    0x01
+#define KA_10SEC   0x02
+#define KA_15SEC   0x03
+#define KA_20SEC   0x04
+#define KA_30SEC   0x06
+#define KA_1MIN    0x0C
+#define KA_2MIN    0x18
+#define KA_5MIN    0x3C
+#define KA_10MIN   0x78
+#define KA_20MIN   0xF0
+
+#define SOCK_TYPE_CLOSED 0x00
+
+typedef enum SockType {
+    SOCK_TYPE_TCP = 0x01,
+    SOCK_TYPE_UDP = 0x02,
+    SOCK_TYPE_MACRAW = 0x04
+} sock_type_t;
+
+typedef enum SockCmd {
+    SOCK_CMD_OPEN = 0x01,
+    SOCK_CMD_LISTEN = 0x02,
+    SOCK_CMD_CONNECT = 0x04,
+    SOCK_CMD_DISCON = 0x08,
+    SOCK_CMD_CLOSE = 0x10,
+    SOCK_CMD_SEND = 0x20,
+    SOCK_CMD_SEND_MAC = 0x21,
+    SOCK_CMD_SEND_KEEP = 0x22,
+    SOCK_CMD_RECV = 0x40
+} sock_cmd_t;
+
+typedef enum SockISRType {
+    SOCK_IR_CON,
+    SOCK_IR_DISCON,
+    SOCK_IR_RECV,
+    SOCK_IR_TIMEOUT,
+    SOCK_IR_SEND_OK,
+    NUM_OF_SOCK_IRS
+} sock_isr_type_t;
+
+typedef enum SockStatus {
+    SOCK_STATUS_CLOSED          = 0x00,
+    SOCK_STATUS_INIT            = 0x13,
+    SOCK_STATUS_LISTEN          = 0x14,
+    SOCK_STATUS_ESTABLISHED     = 0x17,
+    SOCK_STATUS_CLOSE_WAIT      = 0x1C,
+    SOCK_STATUS_UDP             = 0x22,
+    SOCK_STATUS_MACRAW          = 0x42,
+    SOCK_STATUS_SYNSENT         = 0x15,
+    SOCK_STATUS_SYNRECV         = 0x16,
+    SOCK_STATUS_FIN_WAIT        = 0x18,
+    SOCK_STATUS_CLOSING         = 0x1A,
+    SOCK_STATUS_TIME_WAIT       = 0x1B,
+    SOCK_STATUS_LAST_ACK        = 0x1D,
+
+    // Error / software status codes (use negative values)
+    SOCK_STATUS_NUM_EXCEEDED    = -2,
+    SOCK_STATUS_MACRAW_TAKEN    = -3,
+    SOCK_STATUS_CANT_OPEN       = -4,
+    SOCK_STATUS_CANT_CLOSE      = -5,
+    SOCK_STATUS_TIMEOUT         = -6,
+    SOCK_STATUS_RESET           = -7,
+    SOCK_STATUS_SEND_FAIL       = -8,
+    SOCK_STATUS_RECV_FAIL       = -9,
+    SOCK_STATUS_UNSUPPORTED     = -10,
+    SOCK_STATUS_INVALID_ARG     = -11,
+    SOCK_STATUS_NOT_READY       = -12,
+    SOCK_STATUS_BUSY            = -13,
+    SOCK_STATUS_INVALID         = -14    // ? added to fix the compiler error
+} sock_status_t;
+
+typedef struct Wiznet wiznet_t;
+typedef struct Socket socket_t;
+
+typedef struct Wiznet {
+    int8_t _id;
+    uint8_t _sockets_cnt;
+    uint8_t _sockets_taken;
+    socket_t *_sockets[NUM_OF_SOCKETS];
+
+    uint8_t mac_addr[6];
+    uint8_t ip_addr[4];
+    uint8_t ip_gateway_addr[4];
+    uint8_t subnet_mask[4];
+} Wiznet; //source's
+
+struct Socket {
+    int8_t _id;
+    wiznet_t *_host_wiznet;
+
+    uint8_t type;
+    sock_status_t status;
+    uint8_t ip[4];
+    uint16_t port;
+    uint16_t dest_port;
+    uint8_t macraw_dst[6];
+}; //destinations
+
+#define WIZNET_CS_ASSERT()      (P1 &= ~(1 << 5))   /* Clear bit 5 ? CS low */
+#define WIZNET_CS_DEASSERT()    (P1 |=  (1 << 5))   /* Set bit 5 ? CS high */
+#define WIZNET_CS_TOGGLE()      (P1 ^=  (1 << 5))   /* Toggle bit 5 */
+
+#define WIZNET_RESET_ASSERT()   (P3 &= ~0x10)   /* Pull reset low (active reset) - P3.4 = 0 */
+#define WIZNET_RESET_DEASSERT() (P3 |= 0x10)    /* Pull reset high (release reset) - P3.4 = 1 */
+#define WIZNET_RESET_TOGGLE()   (P3 ^= 0x10)    /* Toggle reset pin state - P3.4 toggle */
+
+#define MAX_TCP_SEGMENT_SIZE 1460
+
+#define IAWT 31249
+
+#define W5500_RWB_READ  (0 << 2)
+#define W5500_RWB_WRITE (1 << 2)
+#define W5500_OM_VDM    0x00
+
+#define RX_BUFFER_SIZE 200
+
+const uint8_t sock_n_registers[NUM_OF_SOCKETS] = {
+    SOCKET_0_REGISTERS, SOCKET_1_REGISTERS, SOCKET_2_REGISTERS, SOCKET_3_REGISTERS,
+    SOCKET_4_REGISTERS, SOCKET_5_REGISTERS, SOCKET_6_REGISTERS, SOCKET_7_REGISTERS
+};
+
+const uint8_t sock_n_tx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_TX_BUFFER, SOCKET_1_TX_BUFFER, SOCKET_2_TX_BUFFER, SOCKET_3_TX_BUFFER,
+    SOCKET_4_TX_BUFFER, SOCKET_5_TX_BUFFER, SOCKET_6_TX_BUFFER, SOCKET_7_TX_BUFFER
+};
+
+const uint8_t sock_n_rx_buffers[NUM_OF_SOCKETS] = {
+    SOCKET_0_RX_BUFFER, SOCKET_1_RX_BUFFER, SOCKET_2_RX_BUFFER, SOCKET_3_RX_BUFFER,
+    SOCKET_4_RX_BUFFER, SOCKET_5_RX_BUFFER, SOCKET_6_RX_BUFFER, SOCKET_7_RX_BUFFER
+};
+
+/* IP_Settings */
+// Source MAC Address
+#define SRC_MAC_0 0x21
+#define SRC_MAC_1 0x22
+#define SRC_MAC_2 0x23
+#define SRC_MAC_3 0x24
+#define SRC_MAC_4 0x25
+#define SRC_MAC_5 0x26
+
+// Source IP (Device IP)
+#define SRC_IP_0 192
+#define SRC_IP_1 168
+#define SRC_IP_2 30
+#define SRC_IP_3 205
+
+// Gateway
+#define GATEWAY_0 192
+#define GATEWAY_1 168
+#define GATEWAY_2 30
+#define GATEWAY_3 254
+
+// Subnet
+#define SUBNET_0 255
+#define SUBNET_1 255
+#define SUBNET_2 255
+#define SUBNET_3 0
+
+// Destination IP (Server IP)
+#define DST_IP_0 192
+#define DST_IP_1 168
+#define DST_IP_2 30
+#define DST_IP_3 104
+
+// Source Port (local port)
+#define SRC_PORT 502
+
+// Destination Port (remote port)  //modbus
+#define DST_PORT 10
+/* IP_Settings */
+
+
+/* Modbus */
+// Modbus TCP Implementation for Nuvoton MS51EC0AE with Wiznet
+// Add these to your existing code
+
+// Modbus Function Codes
+#define MODBUS_FC_READ_COILS            0x01
+#define MODBUS_FC_READ_DISCRETE_INPUTS  0x02
+#define MODBUS_FC_READ_HOLDING_REGS     0x03
+#define MODBUS_FC_READ_INPUT_REGS       0x04
+#define MODBUS_FC_WRITE_SINGLE_COIL     0x05
+#define MODBUS_FC_WRITE_SINGLE_REG      0x06
+#define MODBUS_FC_WRITE_MULTIPLE_COILS  0x0F
+#define MODBUS_FC_WRITE_MULTIPLE_REGS   0x10
+
+// Modbus Exception Codes
+#define MODBUS_EX_ILLEGAL_FUNCTION      0x01
+#define MODBUS_EX_ILLEGAL_DATA_ADDRESS  0x02
+#define MODBUS_EX_ILLEGAL_DATA_VALUE    0x03
+
+// Modbus TCP Header Size
+#define MODBUS_TCP_HEADER_SIZE          7
+#define MODBUS_MAX_PDU_SIZE             253
+#define MODBUS_MAX_FRAME_SIZE           (MODBUS_TCP_HEADER_SIZE + MODBUS_MAX_PDU_SIZE)
+
+// Modbus Register Storage
+typedef struct {
+    uint16_t coils[32];              // 32 coils (bit storage)
+    uint16_t discrete_inputs[32];    // 32 discrete inputs
+    uint16_t holding_registers[50]; // 50 holding registers
+    uint16_t input_registers[50];   // 50 input registers
+} modbus_registers_t;
+
+// Modbus TCP Frame Structure
+typedef struct {
+    uint16_t transaction_id;
+    uint16_t protocol_id;
+    uint16_t length;
+    uint8_t unit_id;
+    uint8_t function_code;
+    uint8_t data_t[MODBUS_MAX_PDU_SIZE];
+} modbus_tcp_frame_t;
+
+// Global Modbus registers
+xdata modbus_registers_t modbus_regs;
+
+typedef struct {
+    uint8_t temperature;      // 0-255°C
+    uint8_t oil_level;        // 0-100%
+    float vibration;          // 0.0 - 100.0 Hz
+    uint32_t time;            // Seconds or timestamp
+} sensor_data_t;
+
+xdata sensor_data_t sensor_data;
+
+/*modbus */
+
+#define dp '.'
+#define hi '-'
+#define ha '/'
+#define ac ':'
+#define nu ' ' 
+#define ast '*'
+#define ca 'A'
+#define cb 'B'
+#define cc 'C'
+#define cd 'D'
+#define ce 'E'
+#define cf 'F'
+#define cg 'G'
+#define ch 'H'
+#define ci 'I'
+#define cj 'J'
+#define ck 'K'
+#define cl 'L'
+#define cm 'M'
+#define cn 'N' 
+#define co 'O' 
+#define cp 'P' 
+#define cq 'Q'
+#define cr 'R'
+#define cs 'S'
+#define ct 'T'
+#define cu 'U'
+#define cv 'V' 
+#define cw 'W'
+#define cx 'X' 
+#define cy 'Y'
+#define cz 'Z' 
+#define da '0'
+#define db '1'
+#define dc '2'
+#define dd '3'
+#define de '5'
+#define di '6'
+#define df '7'
+#define dg '8'
+#define dp '.'
+
+#define sa 'a'
+#define sb 'b'
+#define sc 'c'
+#define sd 'd'
+#define se 'e'
+#define sf 'f'
+#define sg 'g'
+#define sh 'h'
+#define si 'i'
+#define sj 'j'
+#define sk 'k'
+#define sl 'l'
+#define sm 'm'
+#define sn 'n' 
+#define so 'o'
+#define sp 'p' 
+#define sq 'q'
+#define sr 'r'
+#define ss 's'
+#define st 't'
+#define su 'u'
+#define sv 'v' 
+#define sw 'w'
+#define sx 'x' 
+#define sy 'y'
+#define sz 'z'
+
+/*------------------------------------------------------------------------------
+							lcd initialisation values routine
+-------------------------------------------------------------------------------*/
+//xdata const char init2[]={0x38,0xa0,0x38,0x0a,0x08,0x0a,0x01,0x0a,0x06,0x0a,0x0f,0x0a,0x80,0x0a,0x01,0x0a};
+xdata const char init2[]={0x33,0x01,0x32,0x01,0x28,0x0A,0x0f,0x01,0x01,0x05,0x06,0x01,0x80,0x01,0x80,0x01,0x01,0x00};
+//menu mode strings
+xdata const char temp_maximum[] = { nu, cm, ca, cx, hi, ct, ce, cm, cp, ac, nu, nu, nu, cc, nu, nu};
+xdata const char oil_lowlvl[] = { co, ci, cl, nu, cl, co, cw, hi, cl, cv, cl, ac, nu, nu, nu, '%' };
+xdata const char max_vib[] = { cm, ca, cx, hi, cv, ci, cb, ac, nu, nu, nu, nu, sm, sm, ha, ss };
+xdata const char run_time[] = { nu, cr, cu, cn, hi, ct, ci, cm, ce, ac, nu, nu, nu, nu, nu, nu };
+//run mode strings
+xdata const char machine_status[] = { nu, cm, ca, cc, ch, ci, cn, ce, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char machine_line2[] = { ch, ac, nu, nu, nu, nu, nu, cv, ac, nu, nu, nu, sm, sm, ha, ss };
+xdata const char coolant_status[] = { nu, cc, co, co, cl, ca, cn, ct, nu, cs, ct, ca, ct, cu, cs, nu };
+xdata const char coolant_line2[] = { ct, cm, cp, ac, nu, nu, cc, nu, cl, cv, cl, ac, nu, nu, nu, '%'};
+//set mode display
+xdata const char set_mode_str[]=	{nu,nu,nu,nu,cs,se,st,nu,sm,so,sd,se,nu,nu,nu,nu};//Set mode
+
+/*-------------------------------------------------------------
+                Global Variable Declarations
+-------------------------------------------------------------*/
+
+xdata char automan = 0, swrelease = 0, setrun = 0, ibm = 0;
+xdata char menu = 0, menu_change = 0, menu1 = 0, k = 0;
+xdata char setruntime = 0, menutime = 0, setswitch = 0, setreset = 0;
+xdata char check = 0, decrement = 0, memsave = 0;
+xdata char memsave1 = 0, loop = 0, lcome = 0, reg = 0;
+xdata char reg7 = 0, temp = 0, icome = 0, t3 = 0;
+
+xdata unsigned char switchpress = 0, sw1 = 0, sw2 = 0, highbyte = 0;
+xdata unsigned char lowbyte = 0, waitset = 0, set_bit_check = 0, rdata = 0;
+xdata unsigned char display_lcd[5] = {0};
+
+xdata uint16_t temp_adc_result = 0, sw_adc_result = 0;
+xdata unsigned int tempResult = 0, adcResult = 0, buffer = 0, result = 0;
+xdata unsigned int result1 = 0, tempmax = 0, oil_low_level = 0, max_vib_var = 0;
+xdata unsigned int run_time_var = 0, duty = 0, readrom = 0, doad = 0;
+xdata unsigned int switchset = 0, switchset1 = 0, switchset2 = 0;
+xdata unsigned int swactive = 0;
+
+
+xdata int msec = 0, pr_count = 0;
+xdata unsigned int counter = 0, counter1 = 0, counter2 = 0, counter3 = 0;
+xdata unsigned int counter4 = 0, counttime = 0, counttime1 = 0, counttime2 = 0;
+xdata unsigned int counttime4 = 0, displaycount = 0, switchdisp = 0, dec = 0;
+xdata unsigned int loop2 = 0, income2 = 0;
+
+volatile unsigned char xdata page_buffer[128] = {0};
+xdata int scan = 0,scan2 = 0;
+xdata unsigned int settings[32] = {0};
+
+char bm4= 4;
+xdata unsigned char data_t = 0;
+xdata unsigned char data1 = 0;
+
+xdata unsigned long tempResultAverage = 0, resultx2 = 0;
+volatile unsigned int r1 = 0, r2 = 0, r3 = 0;
+unsigned char temperature1 = 0;
+double tempResistance = 0;
+unsigned int iterator = 0;
+
+xdata char screen_page = 0;    
+bit current_state = 0, last_state = 0;
+bit BIT_TMP = 0;
+
+xdata uint16_t rx_len = 0;
+xdata uint16_t tx_len = 0;
+xdata uint8_t tx_buffer[MODBUS_MAX_FRAME_SIZE];
+xdata modbus_tcp_frame_t modbus_frame;
+
+xdata int wiznets_cnt = 0;
+xdata wiznet_t *wiznets[NUM_OF_WIZNETS];
+xdata wiznet_t wiznet_main;
+
+xdata socket_t socket_main;
+
+xdata uint8_t rx_buffer[RX_BUFFER_SIZE];
+xdata uint16_t received_bytes = 0;
+xdata uint8_t socket_status = 0;
+xdata uint8_t reconnect_attempt_counter = 0;
+xdata uint8_t welcome_msg_sent = 0;
+xdata uint8_t *actual_data = NULL;
+xdata uint16_t actual_len = 0;
+xdata uint16_t update_counter = 0;
+xdata uint32_t packet_index = 0;
+
+/*clock*/
+void MODIFY_HIRC(unsigned char u8HIRCSEL);
+void set_clock_source(void);
+void init(void);
+void portinit(void);
+void enabler(char t4);
+void delay(char gg);
+void timer_init(void);
+void lcdinit(void);
+void switchscan1(void);
+void tempandptywrite(void);
+void adrcal(void);
+void adcal_temp(void);
+void tempScan(void);
+int adcScan_temp(void);
+void adcal_switch(void);
+void adcal(void);
+void adc_init(void);
+void adcal1(void);
+void switchscan(void);
+void setconversion(void);
+void setmode(void);
+void display(void);
+void display2(void);
+void sline(void);
+void fline(void);
+void delay1(int t8);
+void dataread(void);
+void FlashWrite(void);
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr);
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData);
+
+unsigned char Spi_Read_Byte(unsigned char u8Data);
+unsigned long SPI_Init(unsigned char speed, unsigned char mode);
+void Spi_Write_Byte(unsigned char u8SpiWB);
+void wiznet_t_init(wiznet_t *wiznet);
+void init_socket(socket_t *sock);
+int32_t wiznet_init(wiznet_t *wiznet);
+void wiznet_deinit(wiznet_t *wiznet);
+void wiznet_hw_reset(void);
+uint8_t wiznet_get_version(void);
+void configure_network_settings(wiznet_t *wiznet);
+void verify_and_restore_network(wiznet_t *wiznet);
+void update_sensor_data(void);
+void socket_t_init(socket_t *sock);
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock);
+void sock_reset(socket_t *sock);
+void sock_deinit(socket_t *sock);
+void w5500_init(void);
+void w5500_modbus(void);
+uint8_t sock_open(socket_t *sock);
+void sock_connect(socket_t *sock);
+void sock_listen(socket_t *sock);
+void sock_discon(socket_t *sock);
+void sock_close(socket_t *sock);
+void reset_socket_for_reconnection(wiznet_t *wiznet, socket_t *sock);
+uint8_t check_socket_status(socket_t *sock);
+void socket_enable_keepalive(socket_t *sock, uint8_t interval);
+
+void sendto(socket_t *sock, uint8_t *data_t, uint16_t len);
+uint16_t recv(socket_t *sock, uint8_t *buf, uint16_t buf_size);
+
+/* ================= Function Declarations ================= */
+
+void float_to_registers(float value, uint16_t *reg_high, uint16_t *reg_low);
+void uint32_to_registers(uint32_t value, uint16_t *reg_low, uint16_t *reg_high);
+
+void update_sensor_data(void);
+void update_modbus_registers(void);
+
+void modbus_init(void);
+void Timer2_DELAY(unsigned int time, unsigned char unit);
+
+uint8_t modbus_parse_frame(uint8_t *rx_data, uint16_t rx_len, modbus_tcp_frame_t *frame);
+
+uint16_t modbus_build_response(modbus_tcp_frame_t *request, uint8_t *response_data, uint16_t data_len, uint8_t *tx_buffer);
+uint16_t modbus_build_exception(modbus_tcp_frame_t *request, uint8_t exception_code, uint8_t *tx_buffer);
+
+uint16_t modbus_read_coils(uint16_t start_addr, uint16_t quantity, uint8_t *response);
+uint16_t modbus_read_holding_registers(uint16_t start_addr, uint16_t quantity, uint8_t *response);
+uint16_t modbus_read_input_registers(uint16_t start_addr, uint16_t quantity, uint8_t *response);
+
+uint16_t modbus_write_single_coil(uint16_t addr, uint16_t value, uint8_t *response);
+uint16_t modbus_write_single_register(uint16_t addr, uint16_t value, uint8_t *response);
+uint16_t modbus_write_multiple_registers(uint16_t start_addr, uint16_t quantity, uint8_t *data_t, uint8_t *response);
+
+uint16_t modbus_process_request(modbus_tcp_frame_t *request, uint8_t *tx_buffer);
+
+/* Individual LED control functions */
+void led_init(void);
+void L5_led(led_action_t action);   // L5 - P1.1
+void L6_led(led_action_t action);   // L6 - P1.2
+void L2_led(led_action_t action);   // L2 - P2.2
+void L4_led(led_action_t action);   // L4 -P1.6
+void all_led_off(void);
+
+void main()
+{
+    init();
+    delay(100);
+    lcdinit();
+	  w5500_init();
+    automan = 0;
+    while (1)
+    {
+        if (automan == 0)
+        {
+            chip = 0;
+            enabler(0x01);
+            menu = 0;
+            sw2 = 1;
+            display();
+            tempandptywrite();
+        }
+
+        while (automan == 0) // Run mode
+        {
+            switchscan1();
+            tempScan();
+
+            if (displaycount > 30)
+            {
+                screen_page = !screen_page;
+                display();
+                tempandptywrite();
+                displaycount = 0;
+            }
+           	w5500_modbus();
+            // ===== END OF MODBUS SECTION =====
+        }
+
+        if (automan == 1)
+        {
+            chip = 0;
+            enabler(0x01);
+            menu = 0;
+            sw2 = 1;
+            display2();
+        }
+
+        while (automan == 1)
+        {
+            if ((menu_change != 0) && (menu1 == 0))
+            {
+                display2();
+                menu1 = 1;
+            }
+            setmode();
+        }
+    }
+}
+
+void delay(char gg)
+{
+	  TMOD|=0x01;
+	  TH0=0xfe;
+		TL0=0xf5;//200us
+	  TR0=1;
+    for(k=0;k<gg;k++)
+    {
+			TH0=0xfe;
+			TL0=0xf5;//200us
+			TF0=0;
+			while(TF0==0);
+    }
+		TR0=0;
+}
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						   interrupt service routine
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void Timer_ISR (void) interrupt 16
+{
+	      T3CON &= ~(1 << 4);   // Clear TF3 (bit4)
+ 
+	      msec++;
+        if (msec > 100)
+        {
+            msec = 0;
+            displaycount++;
+        }
+				      
+				if(setrun==0)                        //SET/RUN press.
+				{
+						 swactive=0;
+						 swrelease=0;
+				}
+
+				if(setrun==1&&swrelease==0)          //SET/RUN, when pressed becomes==0 and to enter swrelease==0.
+				{
+						 swactive++;
+						 if(swactive>300)                //3sec
+						 {
+									swrelease=1;               //To exit to \() for running the loop after change of state of automan, swrelease state is changed.
+									swactive=0;
+									automan=!automan;          //Here the change of state of setting or running mode occurs
+						 } 
+				}
+				
+			  current_state = PROXIMITY_SENSOR;    // live read
+
+				if (current_state == 1 && last_state == 0)
+				{
+						pr_count++;
+						if (pr_count > 90)
+								pr_count = 0;
+				}
+
+				last_state = current_state;		
+
+}
+
+//----------------------------------------------------
+// ADC Initialization
+//----------------------------------------------------
+void adc_init(void)
+{
+    SFRS = 0;
+    ADCCON1 &= 0xCF;
+    ADCCON1 |= (4 << 4);   // ADC clock = Fsys / 16
+
+    ENABLE1_ADC_CH9;       //p2.1
+  	ENABLE1_ADC_CH15;      //p2.5
+
+    SFRS = 0;
+}
+
+//----------------------------------------------------
+// ADC Conversion Function (uses global 'channel')
+//----------------------------------------------------
+void adcal_temp(void)
+{
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x09;        
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    temp_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    temp_adc_result = temp_adc_result >> 2;                    // Convert to 10-bit
+}
+
+void adcal_switch(void)
+{
+    ADCCON0 &= 0xF0;          // Clear lower 4 bits (channel select)
+    ADCCON0 |= 0x0C;          // Select current channel (0x0C or 0x0F)
+
+    clr_ADCCON0_ADCF;         // Clear ADC flag
+    set_ADCCON0_ADCS;         // Start ADC conversion
+
+    while (!(ADCCON0 & SET_BIT7));  // Wait until conversion complete
+
+    sw_adc_result = ((ADCRH << 4) | (ADCRL & 0x0F)); // 12-bit result
+    sw_adc_result = sw_adc_result >> 2;                    // Convert to 10-bit
+}
+
+//----------------------------------------------------
+// ADC Scan (averaging one channel)
+//----------------------------------------------------
+int adcScan_temp(void)
+{
+    tempResultAverage = 0;
+    adcResult = 0;
+    for (iterator = 0; iterator < 400; iterator++)
+    {
+        adcal_temp();                     // Perform one ADC read
+        adcResult = temp_adc_result;
+        tempResultAverage += adcResult;
+    }
+
+    return (tempResultAverage / 400); // Return averaged value
+}
+
+void tempScan(void)
+{
+		delay(14);
+	
+	  tempResult = adcScan_temp();
+	
+		tempResistance = 10000 * (tempResult/(1023.0 - tempResult));
+
+		//formula T =  1/(1/T0 + 1/B*ln(R/R0)) ; R - resistance of temperature sensor
+		// 1/T0 = 1/298.15 = 0.00315; B = 3950;R0 = 10000; T in celcius = T - 273.15
+		//converting from kelvin to celsious,so subtracting with 273.15
+		temperature1 = (1/(0.00335 + ((1/3950.0)*log(tempResistance/10000))) - 273.15);
+
+//		if(temperature1 >= 190)//If thermistor is not present
+//		{
+//			temperature1 = 0;
+//		}
+}
+
+void set_clock_source(void)
+{
+	set_CKEN_HIRCEN;         
+  while((CKSWT & SET_BIT5) == 0);
+}
+
+//void set_clock_division_factor(unsigned char value){CKDIV = value;}
+
+void timer_init(void)
+{
+    T3CON = 0x04;      // Timer 3 Control Register
+                       // Bit 2 = 1: Timer 3 clock source = Fsys/12
+                       // Bit 3 = 0: Timer 3 stopped (will be started later)
+    
+    RL3 = 0x18;        // Timer 3 Reload Low byte = 0x18
+    RH3 = 0xFC;        // Timer 3 Reload High byte = 0xFC
+                       // Reload value = 0xFC18 = 64536
+                       // Timer counts from 64536 to 65536 (1000 counts)
+                       // At Fsys/12, if Fsys = 16MHz: 
+                       // Time = 1000 * (12/16MHz) = 0.75ms interrupt rate
+    
+    EIE1 = 0x02;       // Extended Interrupt Enable 1
+                       // Bit 1 = 1: Enable Timer 3 interrupt
+    
+    IE |= 0x80;        // Interrupt Enable Register
+                       // Bit 7 = 1: Enable Global Interrupts (EA = 1)
+    
+    T3CON |= (1<<3);   // Start Timer 3
+                       // Bit 3 = 1: TR3 = 1, Timer 3 Run
+}
+
+void portinit(void)
+{
+    // LCD pins: P0.0-P0.3 (DB4-DB7), P0.4 (RS)
+    SFRS = 0;
+    
+    // Preserve other bits, only modify P0.0-P0.4
+    P0M1 &= 0xE0;  // Clear only bits 0-4, preserve bits 5-7
+    P0M2 = (P0M2 & 0xE0) | 0x1F;  // Set P0.0-P0.4 as push-pull, preserve others
+    P0 &= 0xE0;  // Clear only P0.0-P0.4, preserve others
+    
+    // LCD Enable pin: P1.0
+    P1M1 &= ~0x01;
+    P1M2 = (P1M2 & ~0x01) | 0x01;  // More explicit
+    P1 &= ~0x01;  // Clear only P1.0
+    
+    // Proximity - P0.5 as input (quasi-bidirectional or input-only)
+    P0M1 |= (1 << 5);
+    P0M2 &= ~(1 << 5);
+}
+
+void init(void)
+{
+		 MODIFY_HIRC(HIRC_16);
+		 portinit();
+		 adc_init();
+		 SPI_Init(SPI_1MBPS, SPI_MODE0);	
+	   led_init();
+	   all_led_off();
+}
+void lcdinit(void)
+{
+    reg = 0;
+    chip = 0;
+    while(reg < 15)
+    {
+        reg7 = init2[reg];
+
+        // For the first few init entries we must use longer delays and special timing.
+        // Set bm4 = 1 for those early steps (matches your previous intent).
+        if(reg < 4)
+            bm4 = 1;
+        else
+            bm4 = 0;
+
+        enabler(reg7);
+        reg++;
+        if(reg == 14)
+            return;
+        reg7 = init2[reg];
+        delay(reg7);
+        reg++;
+    }
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								enable routine	
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void enabler(char t4)
+{
+    unsigned char data1_local;
+
+    // Prepare preserved upper nibble including RS bit according to 'chip'
+    data1_local = P0 & 0xF0;         // preserve upper nibble
+    if(chip)
+        data1_local = (data1_local & 0xEF) | 0x10; // ensure P0.4 = 1
+    else
+        data1_local = data1_local & 0xEF;         // ensure P0.4 = 0
+
+    // --- send high nibble ---
+    enab = 1;
+    data_t = (t4 & 0xF0) >> 4;       // high nibble to lower 4 bits
+    data_t = (data_t & 0x0F) | data1_local;
+    P0 = data_t;
+    for(r3 = 0; r3 < 100; r3++);
+    enab = 0;
+
+    if(bm4 == 1)
+    {
+        for(r1 = 0; r1 < 50; r1++)
+            for(r3 = 0; r3 < 100; r3++);
+    }
+
+    // small gap before low nibble
+    enab = 1;
+    for(r3 = 0; r3 < 100; r3++);
+
+    // --- send low nibble ---
+    data_t = t4 & 0x0F;              // low nibble stays in lower 4 bits
+    data_t = (data_t & 0x0F) | data1_local;
+    P0 = data_t;
+    enab = 0;
+
+    if(bm4 == 1)
+    {
+        for(r1 = 0; r1 < 50; r1++)
+            for(r3 = 0; r3 < 100; r3++);
+    }
+
+    for(r3 = 0; r3 < 100; r3++);
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											set volt routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+void fline(void)
+{
+		chip=0;
+		enabler(0x80);
+		delay(2);
+		chip=1;
+}
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+											main routine
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void sline(void)
+{
+		chip=0;
+		enabler(0xc0);
+		delay(1);
+		chip=1;
+}
+
+/*****************************************Main Display*****************************************************/
+void display(void)
+{
+	        if(screen_page == 0)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+										temp = machine_status[t3];
+										enabler(temp);
+										delay(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+										temp = machine_line2[t3]; 
+										enabler(temp);
+										delay(5);
+
+								}
+					}
+					if(screen_page == 1)
+					{
+								fline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//							temp=temperaturestring[t3];//Live Temperature
+										temp = coolant_status[t3];
+										enabler(temp);
+										delay(1);
+								}
+
+								sline();
+								for(t3=0;t3<16;t3++)
+								{
+										chip=1;
+			//		        temp=proximitystring[t3];//Live Count.
+										temp = coolant_line2[t3]; 
+										enabler(temp);
+										delay(5);
+
+								}
+					}
+
+					chip=0;
+					enabler(0x0c);
+					delay(0x01);
+}
+
+void display2(void)
+{
+			fline();
+			chip=1;
+			for(t3=0;t3<16;t3++)
+			{
+					temp=set_mode_str[t3];//SET mode
+					enabler(temp);
+					delay(1);
+			}
+			/**************************************MENU SELECTION***********************************************/
+			sline();
+			for(t3=0;t3<16;t3++)
+			{
+					if(menu==0)//Temperature max display.
+							temp=temp_maximum[t3];
+					if(menu==1)//oil level display.
+							temp=oil_lowlvl[t3];
+					if(menu==2)
+							temp=max_vib[t3];
+					if(menu==3)
+							temp=run_time[t3];
+					enabler(temp);
+					delay(5);
+			}
+			/***********************Digits displaying**************************************************/
+			setconversion();
+			chip=0;
+			enabler(0x0c);
+			delay(0x01);
+}
+
+void setmode(void)
+{
+    switchscan();
+	  switchscan1();
+	  switchset1=1;
+		if(waitset==0)
+		{	
+			    if(((sw2==1)&&(automan==1)&&(setswitch==0)&&(menu<=3)))  //menu switch for setting temp,oil level etc.,
+					{
+												    counter++;	 
+											      if((counter>25)&&(automan==1)&&(switchset==1))
+														{
+																	counter=0;
+																	switchset=0;
+																	switchset1=1;
+																	menu = menu + 1;
+																	if(menu>3)
+																			menu=0;
+																	display2();
+														//     if(memsave1==1)
+														//     {
+														//      memsave=1;
+														//      memsave1=0;
+														//    }
+														//							if((menu==0)||(menu==1)||(menu==2)||(menu==3))
+														//							{
+														//										counter4=80;
+														//							}
+													}
+					}
+/*******************************************************************************************/					
+					if(((menu==0)||(menu==2)||(menu == 3))&&(switchset1==1))
+					{    
+						
+											counter2++;
+										//	if(counter2<counter4)
+										//	{
+										//		      tempmax = 455;
+										//					setswitch=1;
+										//					if(menu==0)
+										//					{
+															//		display_lcd[1]=0;
+															//		display_lcd[2]=20;
+															//		display_lcd[3]=19;
+										//					}
+										//	}				
+												if((counter2>counter4))
+												{
+		
+														setswitch=0;
+														if(menu==0)
+														{
+															dec=tempmax;
+															if(dec>100)
+																	dec=5;													
+														}
+										        if(menu==2)
+														{
+															dec=max_vib_var;
+															if(dec>600)
+																	dec=150;													
+														}
+														if(menu==3)
+														{
+															dec=run_time_var;
+															if(dec>9999)
+																	dec=0;													
+														}
+														setconversion();//1
+							//							switchset1=0;
+														counter2=0;
+														switchpress=1;
+												}
+							//	}
+										/*******************************************************************************/		 
+									if((sw1==1)&&(switchpress==1)&&((menu==0)||(menu == 2)||(menu==3)))  	
+									{
+														//switchpress=0;
+														counter1++;
+														setreset=0;
+														
+														if(counter1>100)
+														{
+														//memsave1=1;
+																counttime4=1;
+																counter1=0;
+														}
+														
+														if((counttime4==1)&&(check==1))
+														{
+																	counter3=counter3-5;
+																	check=0;
+																	if(counter3<=5)
+																	{
+																			counter3=5;
+																	}
+														}
+														
+														if((counter1>20)&&(switchset2==1)&&(counttime4==0))
+														{
+															//		memsave1=1;
+																	counter1=0;
+																	switchset2=0;
+																	decrement=1;
+														}
+														
+														if((counter1>counter3)&&(counttime4==1))
+														{
+																	 decrement=0;
+																	 check=1;
+																	 counter1=0;
+																	 switchset2=0;
+																		 if(menu==0)
+																		 {
+																				dec=dec+1;
+																				if(menu==0)
+																				{
+																								if(dec>100)
+																										dec=5;
+																								tempmax=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+																		 if(menu==2)
+																		 {
+																				dec=dec+1;
+																				if(menu==2)
+																				{
+																								if(dec>600)
+																										dec=150;
+																								max_vib_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+																		 if(menu==3)
+																		 {
+																				dec=dec+1;
+																				if(menu==3)
+																				{
+																								if(dec>9999)
+																										dec=0;
+																								run_time_var=dec;																			
+																				}
+																				setconversion();//2
+																	   }
+														}
+								}
+									////////////////////////////////////////////
+								if((decrement==1)&&(switchset2==1))
+								{
+										decrement=0;
+										switchset2=0;
+										if(menu==0)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==0)
+												{
+															if(dec<5)
+																	dec=100;
+															tempmax = dec;
+												}
+												
+												setconversion();//3
+										}
+										if(menu==2)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<150)
+																	dec=600;
+															max_vib_var = dec;
+												}
+												setconversion();//3
+										}
+										if(menu==3)
+										{
+												if(dec==0)
+														dec=1-dec;
+												if(dec>0)
+														dec=dec-1;
+												if(menu==2)
+												{
+															if(dec<0)
+																	dec=9999;
+															run_time_var = dec;
+												}
+												setconversion();//3
+										}
+								}
+					}
+	  /******************************************************************************/
+		      if((menu==1)&&(switchset1==1))
+					{
+								counter2++;
+				//			setswitch=0;
+										if((sw1==1)&&(switchpress==1)&&(menu==1)&&(counter2>25)) 
+										{
+													oil_low_level += 20;
+											
+											    if(oil_low_level>80){
+																oil_low_level = 20;
+													}
+												  setconversion();
+													counter2 = 0;
+										} 	
+					} 
+					
+		}
+}
+
+void setconversion(void)
+{
+    if(menu==0)
+    {
+        display_lcd[1]= (tempmax/100)+0x30;
+        display_lcd[2]=((tempmax%100)/10)+0x30;
+        display_lcd[3]=((tempmax%100)%10)+0x30;
+			    chip=0;
+					enabler(0xca);//Second line 10th position
+					delay(0x01);
+			    chip=1;
+		      for(ibm=1;ibm<4;ibm++)
+					{
+								temp=display_lcd[ibm];
+								enabler(temp);
+								delay(0x01);
+					}
+    }
+		if(menu==1)
+    {
+        display_lcd[1]= (oil_low_level/100)+0x30;
+        display_lcd[2]=((oil_low_level%100)/10)+0x30;
+        display_lcd[3]=((oil_low_level%100)%10)+0x30;
+			  chip=0;
+				enabler(0xcc);//Second line 12th position
+				delay(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<4;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay(0x01);
+				}
+    }
+		if(menu==2)
+    {
+        display_lcd[1]= (max_vib_var/100)+0x30;
+        display_lcd[2]=((max_vib_var%100)/10)+0x30;
+        display_lcd[3]=((max_vib_var%100)%10)+0x30;
+			  chip=0;
+				enabler(0xc8);//Second line 12th position
+				delay(0x01);
+			  chip=1;
+				temp=display_lcd[1];
+				enabler(temp);
+				delay(0x01);
+				enabler('.');
+				for(ibm=2;ibm<=3;ibm++)
+				{
+						temp=display_lcd[ibm];
+						enabler(temp);
+						delay(0x01);
+				}
+    }
+		if(menu==3)
+    {
+		    display_lcd[1] = (run_time_var/1000) + 0x30;
+        display_lcd[2] = ((run_time_var%1000)/100) + 0x30;
+        display_lcd[3] = ((run_time_var%100)/10) + 0x30;
+        display_lcd[4] = ((run_time_var%100)%10) + 0x30;
+     
+			  chip=0;
+				enabler(0xca);//Second line 10th position
+				delay(0x01);
+			  chip=1;
+		    for(ibm=1;ibm<5;ibm++)
+				{
+							temp=display_lcd[ibm];
+							enabler(temp);
+							delay(0x01);
+				}
+    }
+}
+
+void switchscan(void)
+{
+		  resultx2=0;
+      for(scan=0;scan<250;scan++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/250;
+			
+			if((result>200)&&(result<280))//set/run --BOTH BUTTON PRESS
+			{
+						setruntime++;
+						if(setruntime>1)
+						{
+								setrun=1;
+						}
+			}
+		 	if((result>295)&&(result<350)) //SW1 PRESS..THIS SW1 IS BASED ON SHANTHI GEARS BOARD
+			{
+				    sw2=1;  ///THIS IS THE WORKING OLD LOGIC SW1 AND SW2. 
+	          sw1=0;
+//						setruntime=0;
+//						menutime++;
+
+//						if(menutime>1)
+//						{
+//								setruntime=0;
+//						    sw2=1;
+//	              sw1=0;
+//						}
+			}
+			
+			if((result>470)&&(result<550))//inc key //SW2 PRESS
+			{
+				   sw1=1;
+           sw2=0;
+			}
+			
+		  if(result>800)
+			{
+					setruntime=0;
+					setrun=0;
+					waitset=0;
+				  switchset=1;
+          switchset2=1;
+				  sw2=0;
+				  sw1=0;
+				  counter1=0;
+          counter3=50;
+          counttime2=5;
+          counttime=0;
+          counttime4=0;
+          counttime1=2;
+			}
+}	
+
+void switchscan1(void)  //run mode
+{
+		  resultx2=0;
+      for(scan2=0;scan2<50;scan2++)
+      {   
+       	 adcal_switch();
+         resultx2=sw_adc_result+resultx2;
+      }
+		 
+	    result=resultx2/50;
+			
+		 	if((result>200)&&(result<280))//set/run
+			{
+						setruntime++;
+						
+						if(setruntime>1)
+						{
+								setrun=1;
+						}
+			}
+			
+		  if(result>800)
+			{
+				setrun = 0;
+				setruntime = 0;
+				waitset=0;
+        sw1=0;
+        sw2=0;
+        switchset=1;
+        switchset2=1;
+        counter1=0;
+        counter3=50;
+        counttime2=5;
+        counttime=0;
+        counttime4=0;
+        counttime1=2;
+        switchdisp=0;	
+			}
+}
+
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								                      Aprom read& write routine
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr)
+{
+    rdata = *u16_addr >> 8;
+    return rdata;
+}
+
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
+{
+    unsigned char looptmp = 0;
+    unsigned int u16_addrl_r;
+    unsigned int RAMtmp;
+
+    //Check page start address
+    u16_addrl_r = (u16EPAddr / 128) * 128;
+
+    //Save APROM data to XRAM0
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        RAMtmp = Read_APROM_BYTE((unsigned int code *)(u16_addrl_r + looptmp));
+        page_buffer[looptmp] = RAMtmp;
+    }
+
+    // Modify customer data in XRAM
+    page_buffer[u16EPAddr & 0x7f] = u8EPData;
+
+    //Erase APROM DATAFLASH page
+    IAPAL = u16_addrl_r & 0xff;
+    IAPAH = (u16_addrl_r >> 8) & 0xff;
+    IAPFD = 0xFF;
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x22;
+    set_IAPTRG_IAPGO;
+
+    //Save changed RAM data to APROM DATAFLASH
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x21;
+
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        IAPAL = (u16_addrl_r & 0xff) + looptmp;
+        IAPAH = (u16_addrl_r >> 8) & 0xff;
+        IAPFD = page_buffer[looptmp];
+        set_IAPTRG_IAPGO;
+    }
+
+    clr_IAPUEN_APUEN;
+    clr_CHPCON_IAPEN;
+}
+
+void FlashWrite(void)
+{
+	IE&=~(1<<7);
+	for(loop=1,loop2=1;loop<32,loop2<61;loop++,loop2+=2)
+	{
+				 highbyte=((settings[loop]&(0xFF00))>>8);
+				 lowbyte=(settings[loop]&(0x00FF));
+				 Write_DATAFLASH_BYTE(16800+loop2,highbyte);
+				 Write_DATAFLASH_BYTE(16800+loop2+1,lowbyte);
+	}
+	IE|=(1<<7);
+}
+
+void dataread(void)
+{
+	IE&=~(1<<7);
+ for(lcome=1,income2=1;lcome<32,income2<61;lcome++,income2+=2)
+    {
+       
+           Read_APROM_BYTE(16800+income2);
+			         highbyte=rdata;
+			     Read_APROM_BYTE(16800+income2+1);
+			       lowbyte=rdata;
+			 settings[lcome]=((highbyte<<8)|(lowbyte));
+     //   if(settings[lcome]>9999)
+       //     settings[lcome]=0;
+      }
+    for(lcome=15;lcome<18;lcome++)
+    {
+    if(settings[lcome]!=2)
+       settings[lcome]=1;
+    }
+		for(lcome=19;lcome<32;lcome++)
+    {
+    if(settings[lcome]>=65530)
+       settings[lcome]=0;
+    }
+	  	IE|=(1<<7);
+		  if(settings[1]>=65530)//setvolt
+			settings[1]=200;
+			if(settings[2]>=65530)//sens
+			settings[2]=3;
+			if(settings[3]>=65530)//ophihgh
+			settings[3]=255;
+			if(settings[4]>=65530)//oplow
+			settings[4]=170;
+			if(settings[5]>=65530)//iphigh
+			settings[5]=280;
+			if(settings[6]>=65530)//iplow
+			settings[6]=170;
+			if(settings[7]>=65530)//ctfact
+			settings[7]=174;                                           
+			if(settings[8]>=65530)//ovl
+			settings[8]=35;
+			if(settings[9]>=65530)//icut
+			settings[9]=3;
+			if(settings[10]>=65530)//vcut
+			settings[10]=3;
+			if(settings[11]>=65530)//on delay
+			settings[11]=3;
+			if(settings[18]>=65530)//on delay
+			settings[18]=0;
+
+}
+void tempandptywrite(void)
+{
+	if(screen_page == 1)
+	{
+				sline();
+		    chip=0;
+				enabler(0xC4);
+				delay(5);
+
+				chip=1;
+				//enabler((temperature1/100)+0x30);
+				//delay(2);
+				
+				enabler(((temperature1%100)/10)+0x30);
+				delay(2);
+
+				enabler((temperature1%10)+0x30);
+				delay(2);
+	}
+	if(!screen_page)
+	{
+		  sline();
+			chip=0;
+			enabler(0xc2);
+			delay(1);
+
+			chip=1;
+		
+			enabler((pr_count/1000)+0x30);
+			delay(1);
+		
+	  	enabler(((pr_count%1000)/100)+0x30);
+			delay(1);
+			
+			enabler(((pr_count%100)/10)+0x30);
+			delay(1);
+
+			enabler((pr_count%10)+0x30);
+			delay(1);
+	}
+
+	chip=0;
+	enabler(0x0c);
+	delay(0x01);
+
+}
+void Spi_Write_Byte(unsigned char u8SpiWB)
+{
+    SPDR = u8SpiWB;
+    while(!(SPSR & 0x80));
+    clr_SPSR_SPIF;
+}
+
+unsigned char Spi_Read_Byte(unsigned char u8Data)
+{
+    SPDR = u8Data;
+    while(!(SPSR & SET_BIT7));
+    clr_SPSR_SPIF;
+    return SPDR;
+}
+
+unsigned long SPI_Init(unsigned char speed, unsigned char mode)
+{
+    unsigned long hz = 0;
+    TA = 0xAA; TA = 0x55; SFRS = 2;
+    AUXR7 |= 0x07;
+    TA = 0xAA; TA = 0x55; SFRS = 0;
+
+    P15_PUSHPULL_MODE;
+    P34_PUSHPULL_MODE;
+    P17_QUASI_MODE;
+    P30_QUASI_MODE;
+    P25_INPUT_MODE;
+
+    P15 = 1; P34 = 1; //cs,reset
+
+    set_SPSR_DISMODF;
+    clr_SPCR_SSOE;
+    set_SPCR_MSTR;
+
+    switch(mode)
+    {
+        case SPI_MODE0: clr_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE1: clr_SPCR_CPOL; set_SPCR_CPHA; break;
+        case SPI_MODE2: set_SPCR_CPOL; clr_SPCR_CPHA; break;
+        case SPI_MODE3: set_SPCR_CPOL; set_SPCR_CPHA; break;
+    }
+
+    if(speed == SPI_2MBPS) { SPICLK_FSYS_DIV4; hz = 2000000; }
+    else if(speed == SPI_1MBPS) { SPICLK_FSYS_DIV8; hz = 1000000; }
+    else if(speed == SPI_500KBPS) { SPICLK_FSYS_DIV16; hz = 500000; }
+    else { SPICLK_FSYS_DIV8; hz = 1000000; }
+
+    set_SPCR_SPIEN;
+    return hz;
+}
+
+/* W5500 Related */
+static void _spi_write(uint16_t addr, uint8_t block, uint8_t *data_t, uint16_t len)
+{
+    xdata uint8_t addr_high = (uint8_t)((addr >> 8) & 0xFF);
+    xdata uint8_t addr_low  = (uint8_t)(addr & 0xFF);
+    xdata uint8_t control_phase = (block << 3) | W5500_RWB_WRITE | W5500_OM_VDM;
+    xdata uint16_t i = 0;
+	
+    WIZNET_CS_ASSERT();
+
+    Spi_Write_Byte(addr_high);
+    Spi_Write_Byte(addr_low);
+    Spi_Write_Byte(control_phase);
+
+    for (i = 0; i < len; i++) {
+        Spi_Write_Byte(data_t[i]);
+    }
+
+    WIZNET_CS_DEASSERT();
+}
+
+static void _spi_read(uint16_t addr, uint8_t block, uint8_t *buf, uint16_t len)
+{
+    xdata uint8_t addr_high = (uint8_t)((addr >> 8) & 0xFF);
+    xdata uint8_t addr_low  = (uint8_t)(addr & 0xFF);
+    xdata uint8_t control_phase = (block << 3) | W5500_RWB_READ | W5500_OM_VDM;
+    xdata uint16_t i = 0;
+	
+    WIZNET_CS_ASSERT();
+
+    Spi_Write_Byte(addr_high);
+    Spi_Write_Byte(addr_low);
+    Spi_Write_Byte(control_phase);
+
+    for (i = 0; i < len; i++) {
+        buf[i] = Spi_Read_Byte(0xFF);
+    }
+
+    WIZNET_CS_DEASSERT();
+}
+
+static void wiznet_hw_reset(void)
+{
+    xdata uint8_t phy_status;
+    xdata uint32_t timeout_counter;
+    xdata uint8_t reset_success = 0;
+    
+    timeout_counter = 0;
+    WIZNET_RESET_ASSERT();
+   delay(100);
+    WIZNET_RESET_DEASSERT();
+   delay(200);
+    
+    while (1)
+    {
+        _spi_read(PHYCFGR, COMMON_REGISTERS, &phy_status, 1);
+        if ((phy_status & (1 << PHYCFGR_RST)) && (phy_status & (1 << LNK)))
+        {
+            reset_success = 1;
+            break;
+        }
+        timeout_counter++;
+        if (timeout_counter > TIMEOUT_WIZNET_RESET)
+        {
+            reset_success = 0;
+            break;
+        }
+        delay(1);
+    }
+}
+
+void wiznet_t_init(wiznet_t *wiznet)
+{
+    uint8_t i;
+
+    wiznet->_id = -1;
+    wiznet->_sockets_cnt = 0;
+    wiznet->_sockets_taken = 0x00;
+
+    for (i = 0; i < NUM_OF_SOCKETS; i++)
+        wiznet->_sockets[i] = NULL;
+
+    for (i = 0; i < 6; i++)
+        wiznet->mac_addr[i] = 0;
+
+    for (i = 0; i < 4; i++)
+        wiznet->ip_addr[i] = 0;
+
+    for (i = 0; i < 4; i++)
+        wiznet->ip_gateway_addr[i] = 0;
+
+    for (i = 0; i < 4; i++)
+        wiznet->subnet_mask[i] = 0;
+}
+
+int32_t wiznet_init(wiznet_t *wiznet)
+{
+    xdata uint32_t i;
+    xdata uint16_t i_awt;
+    xdata uint8_t version;
+
+    static xdata uint8_t is_first_wiznet = 1;
+	  
+    if (is_first_wiznet)
+    {
+        is_first_wiznet = 0;
+        for (i = 0; i < NUM_OF_WIZNETS; i++)
+        {
+            wiznets[i] = NULL;
+        }
+    }
+
+    if (wiznets_cnt >= NUM_OF_WIZNETS)
+    {
+        return -1;
+    }
+    else
+    {
+        for (i = 0; i < NUM_OF_WIZNETS; i++)
+        {
+            if (wiznets[i] == NULL)
+            {
+                wiznets[i] = wiznet;
+                wiznet->_id = i;
+                break;
+            }
+        }
+        wiznets_cnt++;
+    }
+
+    wiznet_hw_reset();
+
+    i_awt = IAWT;
+    i_awt = SWAP_TWO_BYTES(i_awt);
+    _spi_write(INTLEVEL, COMMON_REGISTERS, (uint8_t *)&i_awt, sizeof(uint16_t));
+
+    _spi_write(SHAR, COMMON_REGISTERS, wiznet->mac_addr, 6);
+    _spi_write(SIPR, COMMON_REGISTERS, wiznet->ip_addr, 4);
+    _spi_write(GAR, COMMON_REGISTERS, wiznet->ip_gateway_addr, 4);
+    _spi_write(SUBR, COMMON_REGISTERS, wiznet->subnet_mask, 4);
+
+    version = wiznet_get_version();
+
+		if(version==4){
+				L4_led(LED_ON);
+		}
+		else{
+				L5_led(LED_ON);
+		}
+    return (version == 4) ? 0 : -1;
+}
+
+void led_init(void)
+{
+    P11_PUSHPULL_MODE;
+    P12_PUSHPULL_MODE;
+    P22_PUSHPULL_MODE;
+    P16_PUSHPULL_MODE;
+
+    P11 = 0;
+    P12 = 0;
+    P22 = 0;
+    P16 = 0;
+}
+
+void L5_led(led_action_t action)
+{
+    P11_PUSHPULL_MODE;
+    switch(action)
+    {
+        case LED_OFF:    P11 = 0; break;
+        case LED_ON:     P11 = 1; break;
+        case LED_TOGGLE: P11 ^= 1; break;
+    }
+}
+
+void L6_led(led_action_t action)
+{
+    P12_PUSHPULL_MODE;
+    switch(action)
+    {
+        case LED_OFF:    P12 = 0; break;
+        case LED_ON:     P12 = 1; break;
+        case LED_TOGGLE: P12 ^= 1; break;
+    }
+}
+
+void L2_led(led_action_t action)
+{
+    P22_PUSHPULL_MODE;
+    switch(action)
+    {
+        case LED_OFF:    P22 = 0; break;
+        case LED_ON:     P22 = 1; break;
+        case LED_TOGGLE: P22 ^= 1; break;
+    }
+}
+
+void L4_led(led_action_t action)
+{
+    P16_PUSHPULL_MODE;
+    switch(action)
+    {
+        case LED_OFF:    P16 = 0; break;
+        case LED_ON:     P16 = 1; break;
+        case LED_TOGGLE: P16 ^= 1; break;
+    }
+}
+void all_led_off(void)
+{
+    P11 = 0;
+    P12 = 0;
+    P22 = 0;
+    P16 = 0;
+}
+
+uint8_t wiznet_get_version(void)
+{
+    xdata uint8_t version = 0;
+    _spi_read(VERSIONR, COMMON_REGISTERS, &version, sizeof(uint8_t));
+    return version;
+}
+
+void socket_t_init(socket_t *sock)
+{
+    if (sock == NULL)
+        return; // simple null check for safety
+
+    sock->_id = 1;
+    sock->_host_wiznet = NULL;
+
+    sock->type = SOCK_TYPE_CLOSED;
+    sock->status = SOCK_STATUS_CLOSED;
+
+    memset(sock->ip, 0, sizeof(sock->ip));
+    memset(sock->macraw_dst, 0, sizeof(sock->macraw_dst));
+
+    sock->port = 0;
+    sock->dest_port = 0;
+}
+
+void configure_network_settings(wiznet_t *wiznet)
+{
+    wiznet->mac_addr[0] = SRC_MAC_0;
+    wiznet->mac_addr[1] = SRC_MAC_1;
+    wiznet->mac_addr[2] = SRC_MAC_2;
+    wiznet->mac_addr[3] = SRC_MAC_3;
+    wiznet->mac_addr[4] = SRC_MAC_4;
+    wiznet->mac_addr[5] = SRC_MAC_5;
+    wiznet->ip_addr[0] = SRC_IP_0;
+    wiznet->ip_addr[1] = SRC_IP_1;
+    wiznet->ip_addr[2] = SRC_IP_2;
+    wiznet->ip_addr[3] = SRC_IP_3;
+    wiznet->ip_gateway_addr[0] = GATEWAY_0;
+    wiznet->ip_gateway_addr[1] = GATEWAY_1;
+    wiznet->ip_gateway_addr[2] = GATEWAY_2;
+    wiznet->ip_gateway_addr[3] = GATEWAY_3;
+    wiznet->subnet_mask[0] = SUBNET_0;
+    wiznet->subnet_mask[1] = SUBNET_1;
+    wiznet->subnet_mask[2] = SUBNET_2;
+    wiznet->subnet_mask[3] = SUBNET_3;
+}
+
+sock_status_t socket(wiznet_t *wiznet, socket_t *sock)
+{
+    xdata uint8_t i;
+    xdata uint8_t sock_n_register;
+    xdata uint8_t byte;
+    xdata uint16_t max_sgmnt_size;
+    xdata uint8_t tmpbuf[2];
+
+    if (wiznet->_sockets_cnt >= NUM_OF_SOCKETS) {
+        sock->status = SOCK_STATUS_NUM_EXCEEDED;
+        return sock->status;
+    }
+
+    if (sock->type == SOCK_TYPE_MACRAW) {
+        if (((1 << 0) & wiznet->_sockets_taken) == 0) {
+            sock->_id = 0;
+        } else {
+            sock->status = SOCK_STATUS_MACRAW_TAKEN;
+            return sock->status;
+        }
+    } else if (wiznet->_sockets_taken == 0xFE) {
+        sock->_id = 0;
+    } else {
+        for (i = 1; i < NUM_OF_SOCKETS; i++) {
+            if (((1 << i) & wiznet->_sockets_taken) == 0) {
+                sock->_id = i;
+                break;
+            }
+        }
+    }
+
+    sock->_host_wiznet = wiznet;
+    sock_n_register = sock_n_registers[sock->_id];
+
+    switch (sock->type) {
+        case SOCK_TYPE_UDP:
+            byte = SOCK_TYPE_UDP;
+            break;
+
+        case SOCK_TYPE_TCP:
+            byte = SOCK_TYPE_TCP;
+            max_sgmnt_size = MAX_TCP_SEGMENT_SIZE;
+            tmpbuf[0] = (uint8_t)((max_sgmnt_size >> 8) & 0xFF);
+            tmpbuf[1] = (uint8_t)(max_sgmnt_size & 0xFF);
+            _spi_write(Sn_MSSR, sock_n_register, tmpbuf, 2);
+            break;
+
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_TYPE_MACRAW;
+            _spi_write(Sn_DHAR, sock_n_register, sock->macraw_dst, 6);
+            break;
+
+        default:
+            byte = 0;
+            break;
+    }
+
+    _spi_write(Sn_MR, sock_n_register, &byte, 1);
+
+    if (sock->type != SOCK_TYPE_MACRAW) {
+        tmpbuf[0] = (uint8_t)((sock->port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->port & 0xFF);
+        _spi_write(Sn_PORT, sock_n_register, tmpbuf, 2);
+
+        tmpbuf[0] = (uint8_t)((sock->dest_port >> 8) & 0xFF);
+        tmpbuf[1] = (uint8_t)(sock->dest_port & 0xFF);
+        _spi_write(Sn_DPORT, sock_n_register, tmpbuf, 2);
+
+        _spi_write(Sn_DIPR, sock_n_register, sock->ip, 4);
+    }
+
+    sock->status = SOCK_STATUS_INIT;
+
+    if (sock->status > 0) {
+        wiznet->_sockets_cnt++;
+        wiznet->_sockets_taken |= (1 << sock->_id);
+        wiznet->_sockets[sock->_id] = sock;
+    } else {
+        sock->_id = -1;
+        sock->_host_wiznet = NULL;
+    }
+		
+    return sock->status;
+}
+
+uint8_t sock_open(socket_t *sock)
+{
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    xdata uint8_t cmd, status = 0;
+    xdata uint32_t timeout_counter = 0;
+	
+	  _spi_read(Sn_SR, sock_n_register, &status, 1);
+    if (status != SOCK_STATUS_CLOSED) {
+        cmd = SOCK_CMD_CLOSE;
+        _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+        do {
+            _spi_read(Sn_SR, sock_n_register, &status, 1);
+        } while (status != SOCK_STATUS_CLOSED);
+    }
+
+    cmd = SOCK_CMD_OPEN;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+
+    timeout_counter = 0;
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+
+        if ((sock->type == SOCK_TYPE_UDP && status == SOCK_STATUS_UDP) ||
+            (sock->type == SOCK_TYPE_TCP && status == SOCK_STATUS_INIT) ||
+            (sock->type == SOCK_TYPE_MACRAW && status == SOCK_STATUS_MACRAW)) {
+            sock->status = status;
+            return 1;
+        }
+
+        delay(10);
+        timeout_counter += 10;
+
+    } while (timeout_counter < TIMEOUT_SOCKET_OPEN);
+
+    cmd = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+    do {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+    } while (status != SOCK_STATUS_CLOSED);
+
+    sock->status = status;
+		
+		return 0;
+}
+
+void sock_close(socket_t *sock) 
+{
+    xdata uint8_t sock_n_register;
+    xdata uint8_t byte;
+    xdata uint8_t status;
+    xdata uint32_t retry_counter = 0;
+
+    sock_n_register = sock_n_registers[sock->_id];
+
+    byte = SOCK_CMD_CLOSE;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    while (1) {
+        _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+        if (status == SOCK_STATUS_CLOSED) {
+            sock->status = SOCK_STATUS_CLOSED;
+            break;
+        }
+        else if (retry_counter++ > 5000) {   // tune this value as needed
+            sock->status = SOCK_STATUS_CANT_CLOSE;
+            break;
+        }
+    }
+}
+
+void sock_listen(socket_t *sock)
+{
+    xdata uint8_t sock_n_register;
+    xdata uint8_t status;
+    xdata uint8_t cmd;
+    xdata uint16_t wait_count;
+
+    sock_n_register = sock_n_registers[sock->_id];
+
+    // only valid for TCP sockets
+    if (sock->type != SOCK_TYPE_TCP)
+    {
+        sock->status = SOCK_STATUS_INVALID;
+        return;
+    }
+
+    // ensure socket is in INIT state
+    _spi_read(Sn_SR, sock_n_register, &status, 1);
+    if (status != SOCK_STATUS_INIT)
+    {
+        sock->status = status;
+        return;
+    }
+
+    // send LISTEN command
+    cmd = SOCK_CMD_LISTEN;
+    _spi_write(Sn_CR, sock_n_register, &cmd, 1);
+
+    // wait until socket status becomes LISTEN or timeout
+    wait_count = 0;
+    while (1)
+    {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+        if (status == SOCK_STATUS_LISTEN)
+        {
+            sock->status = SOCK_STATUS_LISTEN;
+            break;
+        }
+
+        delay(10);  // 10 ms polling
+        wait_count += 10;
+
+        if (wait_count >= 2000)  // 2-second timeout
+        {
+            return;
+        }
+    }
+
+    wait_count = 0;
+    while (1)
+    {
+        _spi_read(Sn_SR, sock_n_register, &status, 1);
+        if (status == SOCK_STATUS_ESTABLISHED)
+        {
+            sock->status = SOCK_STATUS_ESTABLISHED;
+            // UART0_Send_String("Client connected successfully.\r\n");
+            break;
+        }
+
+        delay(10);  // poll every 10ms
+        wait_count += 10;
+
+        if (wait_count >= 4000)  // 4-second timeout
+        {
+            // UART0_Send_String("Client connection timeout\r\n");
+            sock->status = status;
+            break;
+        }
+    }
+}
+
+void sock_discon(socket_t *sock)
+{
+		xdata uint8_t sock_n_register;
+		xdata uint8_t byte;
+		xdata uint8_t status;
+		xdata uint32_t retry_counter = 0;
+
+		sock_n_register = sock_n_registers[sock->_id];
+
+		byte = SOCK_CMD_DISCON;
+		_spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+		while (1)
+		{
+			_spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+
+			if (status == SOCK_STATUS_CLOSED) {
+				sock->status = SOCK_STATUS_CLOSED;
+				break;
+			}
+			else if (retry_counter++ > 5000)
+			{
+				sock->status = SOCK_STATUS_CANT_CLOSE;
+				break;
+			}
+		}
+}
+
+void sendto(socket_t *sock,uint8_t *data_t, uint16_t len)
+{
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    xdata uint16_t sock_n_tx_buffer = sock_n_tx_buffers[sock->_id];
+    xdata uint16_t tx_buf_free_size = 0;
+    xdata uint16_t tx_start_ptr = 0, tx_end_ptr = 0;
+    xdata uint8_t byte = 0;
+    xdata uint8_t need_to_fragment = 0;
+    xdata uint8_t *ptr_to_next_fragment = NULL;
+    xdata uint16_t len_of_next_fragment = 0;
+
+    _spi_read(Sn_TX_FSR, sock_n_register, (uint8_t *)&tx_buf_free_size, sizeof(uint16_t));
+    tx_buf_free_size = SWAP_TWO_BYTES(tx_buf_free_size);
+
+    if (tx_buf_free_size < len) {
+        need_to_fragment = 1;
+        ptr_to_next_fragment = data_t + tx_buf_free_size;
+        len_of_next_fragment = len - tx_buf_free_size;
+        len = tx_buf_free_size;
+    }
+
+    _spi_read(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_start_ptr, sizeof(uint16_t));
+    _spi_write(tx_start_ptr, sock_n_tx_buffer, data_t, len);
+
+    tx_end_ptr = tx_start_ptr + len;
+    _spi_write(Sn_TX_WR, sock_n_register, (uint8_t *)&tx_end_ptr, sizeof(uint16_t));
+
+    switch (sock->type) {
+        case SOCK_TYPE_TCP:
+        case SOCK_TYPE_UDP:
+            byte = SOCK_CMD_SEND;
+            break;
+        case SOCK_TYPE_MACRAW:
+            byte = SOCK_CMD_SEND_MAC;
+            break;
+        default:
+            byte = 0;
+            break;
+    }
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    if (need_to_fragment) {
+        sendto(sock, ptr_to_next_fragment, len_of_next_fragment);
+    }
+}
+
+uint16_t recv(socket_t *sock,uint8_t *buf, uint16_t buf_size)
+{
+    xdata uint8_t sock_n_register;
+    xdata uint16_t sock_n_rx_buffer;
+    xdata uint16_t rx_start_ptr;
+    xdata uint16_t rx_end_ptr;
+    xdata uint16_t len_of_received_data;
+    xdata uint16_t first_chunk_len;
+    xdata uint16_t second_chunk_len;
+    xdata uint8_t byte;
+
+    sock_n_register = sock_n_registers[sock->_id];
+    sock_n_rx_buffer = sock_n_rx_buffers[sock->_id];
+
+    _spi_read(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+    _spi_read(Sn_RX_WR, sock_n_register, (uint8_t *)&rx_end_ptr, sizeof(uint16_t));
+
+    if (rx_end_ptr == rx_start_ptr) {
+        return 0;
+    } else if (rx_end_ptr < rx_start_ptr) {
+        len_of_received_data = (0xFFFF - rx_start_ptr) + rx_end_ptr + 1;
+    } else {
+        len_of_received_data = rx_end_ptr - rx_start_ptr;
+    }
+
+    if (len_of_received_data > buf_size) {
+        len_of_received_data = buf_size;
+    }
+
+    if (rx_end_ptr < rx_start_ptr) {
+        first_chunk_len = 0xFFFF - rx_start_ptr + 1;
+        if (first_chunk_len > len_of_received_data) {
+            first_chunk_len = len_of_received_data;
+            second_chunk_len = 0;
+        } else {
+            second_chunk_len = len_of_received_data - first_chunk_len;
+        }
+
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, first_chunk_len);
+
+        if (second_chunk_len > 0) {
+            _spi_read(0, sock_n_rx_buffer, buf + first_chunk_len, second_chunk_len);
+        }
+    } else {
+        _spi_read(rx_start_ptr, sock_n_rx_buffer, buf, len_of_received_data);
+    }
+
+    rx_start_ptr = rx_start_ptr + len_of_received_data;
+    _spi_write(Sn_RX_RD, sock_n_register, (uint8_t *)&rx_start_ptr, sizeof(uint16_t));
+
+    byte = SOCK_CMD_RECV;
+    _spi_write(Sn_CR, sock_n_register, &byte, sizeof(uint8_t));
+
+    return len_of_received_data;
+}
+
+uint8_t check_socket_status(socket_t *sock)
+{
+    xdata uint8_t status = 0;
+    xdata uint8_t sock_n_register = sock_n_registers[sock->_id];
+    _spi_read(Sn_SR, sock_n_register, &status, sizeof(uint8_t));
+    return status;
+}
+
+void init_socket(socket_t *sock)
+{
+    socket_t_init(sock);
+    sock->ip[0] = DST_IP_0;
+    sock->ip[1] = DST_IP_1;
+    sock->ip[2] = DST_IP_2;
+    sock->ip[3] = DST_IP_3;
+    sock->port = SRC_PORT;
+    sock->dest_port = DST_PORT;
+    sock->type = SOCK_TYPE_TCP;
+}
+void float_to_registers(float value, uint16_t *reg_high, uint16_t *reg_low)
+{
+    union {
+        float f;
+        uint32_t u32;
+    } converter;
+    converter.f = value;
+
+    *reg_high = (uint16_t)((converter.u32 >> 16) & 0xFFFF); // High word
+    *reg_low  = (uint16_t)(converter.u32 & 0xFFFF);         // Low word
+}
+
+void uint32_to_registers(uint32_t value, uint16_t *reg_low, uint16_t *reg_high)
+{
+    *reg_low  = value & 0xFFFF;           // Low 16 bits first
+    *reg_high = (value >> 16) & 0xFFFF;   // High 16 bits next
+}
+
+void update_sensor_data(void)
+{
+//    static uint8_t temp_val = 20;
+    static uint8_t oil_val = 50;
+    static float vib_val = 0.0f;
+    static uint32_t time_val = 35000;
+
+    sensor_data.temperature = temperature1;
+//    temp_val++;
+//    if (temp_val > 30) 
+//			temp_val = 20;
+
+    sensor_data.oil_level = oil_val;
+    oil_val += 5;
+    if (oil_val > 100) 
+			oil_val = 50;
+
+    sensor_data.vibration = vib_val;
+    vib_val += 0.1f;
+    if (vib_val > 5.0f) 
+			vib_val = 0.0f;
+
+    sensor_data.time = time_val;
+    time_val += 100;
+    if (time_val > 45000) 
+			time_val = 35000;
+}
+
+
+void update_modbus_registers(void)
+{
+    modbus_regs.holding_registers[0] = sensor_data.temperature;
+    modbus_regs.holding_registers[1] = sensor_data.oil_level;
+    float_to_registers(sensor_data.vibration, &modbus_regs.holding_registers[2], &modbus_regs.holding_registers[3]);
+    uint32_to_registers(sensor_data.time, &modbus_regs.holding_registers[4], &modbus_regs.holding_registers[5]);
+}
+
+void init_sensor_data(void)
+{
+    sensor_data.temperature = temperature1;      // 25°C
+    sensor_data.oil_level = 75;        // 75%
+    sensor_data.vibration = 2.5f;      // 2.5 
+    sensor_data.time = 0;              // 0 seconds
+}
+/* modbus */
+void modbus_init(void)
+{
+    uint8_t i;
+    
+    for (i = 0; i < 32; i++) {
+        modbus_regs.coils[i] = 0;
+        modbus_regs.discrete_inputs[i] = 0;
+    }
+    
+    for (i = 0; i < 50; i++) 
+		{
+        modbus_regs.holding_registers[i] = 0;
+        modbus_regs.input_registers[i] = 0;
+    }
+    
+    init_sensor_data();
+    update_modbus_registers();
+}
+
+uint8_t modbus_parse_frame(uint8_t *rx_data, uint16_t rx_len, modbus_tcp_frame_t *frame)
+{
+    uint16_t i;
+    if (rx_len < MODBUS_TCP_HEADER_SIZE) 
+			return 0;
+    frame->transaction_id = (rx_data[0] << 8) | rx_data[1];
+    frame->protocol_id = (rx_data[2] << 8) | rx_data[3];
+    frame->length = (rx_data[4] << 8) | rx_data[5];
+    frame->unit_id = rx_data[6];
+    frame->function_code = rx_data[7];
+    for (i = 0; i < (rx_len - MODBUS_TCP_HEADER_SIZE - 1); i++) {
+        frame->data_t[i] = rx_data[8 + i];
+    }
+    return 1;
+}
+
+uint16_t modbus_build_response(modbus_tcp_frame_t *request, uint8_t *response_data, uint16_t data_len, uint8_t *tx_buffer)
+{
+    uint16_t i;
+    uint16_t total_len;
+    tx_buffer[0] = (request->transaction_id >> 8) & 0xFF;
+    tx_buffer[1] = request->transaction_id & 0xFF;
+    tx_buffer[2] = 0x00;
+    tx_buffer[3] = 0x00;
+    total_len = 1 + 1 + data_len;
+    tx_buffer[4] = (total_len >> 8) & 0xFF;
+    tx_buffer[5] = total_len & 0xFF;
+    tx_buffer[6] = request->unit_id;
+    tx_buffer[7] = request->function_code;
+    for (i = 0; i < data_len; i++) {
+        tx_buffer[8 + i] = response_data[i];
+    }
+    return MODBUS_TCP_HEADER_SIZE + 1 + data_len;
+}
+
+uint16_t modbus_build_exception(modbus_tcp_frame_t *request, uint8_t exception_code, uint8_t *tx_buffer)
+{
+    uint16_t total_len;
+    tx_buffer[0] = (request->transaction_id >> 8) & 0xFF;
+    tx_buffer[1] = request->transaction_id & 0xFF;
+    tx_buffer[2] = 0x00;
+    tx_buffer[3] = 0x00;
+    total_len = 3;
+    tx_buffer[4] = (total_len >> 8) & 0xFF;
+    tx_buffer[5] = total_len & 0xFF;
+    tx_buffer[6] = request->unit_id;
+    tx_buffer[7] = request->function_code | 0x80;
+    tx_buffer[8] = exception_code;
+    return 9;
+}
+
+uint16_t modbus_read_coils(uint16_t start_addr, uint16_t quantity, uint8_t *response)
+{
+    uint16_t i, byte_count;
+    uint8_t bit_index, byte_index;
+    if (start_addr + quantity > 64 * 16 || quantity > 2000) 
+			return 0;
+    byte_count = (quantity + 7) / 8;
+    response[0] = byte_count;
+    for (i = 0; i < byte_count; i++) response[1 + i] = 0;
+    for (i = 0; i < quantity; i++) 
+		{
+        byte_index = i / 8;
+        bit_index = i % 8;
+        if (modbus_regs.coils[(start_addr + i) / 16] & (1 << ((start_addr + i) % 16))) {
+            response[1 + byte_index] |= (1 << bit_index);
+        }
+    }
+    return byte_count + 1;
+}
+
+uint16_t modbus_read_holding_registers(uint16_t start_addr, uint16_t quantity, uint8_t *response)
+{
+    uint16_t i;
+    if (start_addr + quantity > 100 || quantity > 125) 
+			return 0;
+    response[0] = quantity * 2;
+    for (i = 0; i < quantity; i++) 
+		{
+        response[1 + i * 2] = (modbus_regs.holding_registers[start_addr + i] >> 8) & 0xFF;
+        response[2 + i * 2] = modbus_regs.holding_registers[start_addr + i] & 0xFF;
+    }
+    return quantity * 2 + 1;
+}
+
+uint16_t modbus_read_input_registers(uint16_t start_addr, uint16_t quantity, uint8_t *response)
+{
+    uint16_t i;
+    if (start_addr + quantity > 100 || quantity > 125) 
+			return 0;
+    response[0] = quantity * 2;
+    for (i = 0; i < quantity; i++) 
+		{
+        response[1 + i * 2] = (modbus_regs.input_registers[start_addr + i] >> 8) & 0xFF;
+        response[2 + i * 2] = modbus_regs.input_registers[start_addr + i] & 0xFF;
+    }
+    return quantity * 2 + 1;
+}
+
+uint16_t modbus_write_single_coil(uint16_t addr, uint16_t value, uint8_t *response)
+{
+    if (addr >= 64 * 16) 
+			return 0;
+    if (value == 0xFF00) 
+			modbus_regs.coils[addr / 16] |= (1 << (addr % 16));
+    else if (value == 0x0000) 
+			modbus_regs.coils[addr / 16] &= ~(1 << (addr % 16));
+    else 
+			return 0;
+    response[0] = (addr >> 8) & 0xFF;
+    response[1] = addr & 0xFF;
+    response[2] = (value >> 8) & 0xFF;
+    response[3] = value & 0xFF;
+    return 4;
+}
+
+uint16_t modbus_write_single_register(uint16_t addr, uint16_t value, uint8_t *response)
+{
+    if (addr >= 100) return 0;
+    modbus_regs.holding_registers[addr] = value;
+    response[0] = (addr >> 8) & 0xFF;
+    response[1] = addr & 0xFF;
+    response[2] = (value >> 8) & 0xFF;
+    response[3] = value & 0xFF;
+    return 4;
+}
+
+uint16_t modbus_write_multiple_registers(uint16_t start_addr, uint16_t quantity, uint8_t *data_t, uint8_t *response)
+{
+    uint16_t i;
+    if (start_addr + quantity > 100 || quantity > 123) return 0;
+    for (i = 0; i < quantity; i++) {
+        modbus_regs.holding_registers[start_addr + i] = (data_t[1 + i * 2] << 8) | data_t[2 + i * 2];
+    }
+    response[0] = (start_addr >> 8) & 0xFF;
+    response[1] = start_addr & 0xFF;
+    response[2] = (quantity >> 8) & 0xFF;
+    response[3] = quantity & 0xFF;
+    return 4;
+}
+
+uint16_t modbus_process_request(modbus_tcp_frame_t *request, uint8_t *tx_buffer)
+{
+    xdata uint16_t start_addr, quantity, value, data_len;
+    xdata uint8_t response_data[MODBUS_MAX_PDU_SIZE];
+    xdata uint8_t exception_code = 0;
+    switch (request->function_code) {
+        case MODBUS_FC_READ_COILS:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            quantity = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_read_coils(start_addr, quantity, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        case MODBUS_FC_READ_HOLDING_REGS:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            quantity = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_read_holding_registers(start_addr, quantity, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        case MODBUS_FC_READ_INPUT_REGS:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            quantity = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_read_input_registers(start_addr, quantity, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        case MODBUS_FC_WRITE_SINGLE_COIL:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            value = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_write_single_coil(start_addr, value, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        case MODBUS_FC_WRITE_SINGLE_REG:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            value = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_write_single_register(start_addr, value, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        case MODBUS_FC_WRITE_MULTIPLE_REGS:
+            start_addr = (request->data_t[0] << 8) | request->data_t[1];
+            quantity = (request->data_t[2] << 8) | request->data_t[3];
+            data_len = modbus_write_multiple_registers(start_addr, quantity, request->data_t, response_data);
+            if (data_len == 0) exception_code = MODBUS_EX_ILLEGAL_DATA_ADDRESS;
+            break;
+        default:
+            exception_code = MODBUS_EX_ILLEGAL_FUNCTION;
+            break;
+    }
+    if (exception_code != 0) 
+			return modbus_build_exception(request, exception_code, tx_buffer);
+    else 
+			return modbus_build_response(request, response_data, data_len, tx_buffer);
+}
+
+/*clock*/
+void MODIFY_HIRC(unsigned char u8HIRCSEL)
+{
+    unsigned char hircmap0,hircmap1;
+
+    SFRS = 0;
+    switch (u8HIRCSEL)
+    {
+        case HIRC_24: IAPAL = 0x38; break;
+        case HIRC_16: IAPAL = 0x30; break;
+        case HIRC_166: IAPAL = 0x30; break;
+    }
+
+    set_CHPCON_IAPEN;
+    IAPAH = 0x00;
+    IAPCN = READ_UID;
+    set_IAPTRG_IAPGO;
+    hircmap0 = IAPFD;
+    IAPAL++;
+    set_IAPTRG_IAPGO;
+    hircmap1 = IAPFD;
+
+    TA = 0xAA; TA = 0x55; RCTRIM0 = hircmap0;
+    TA = 0xAA; TA = 0x55; RCTRIM1 = hircmap1;
+    clr_CHPCON_IAPEN;
+    PCON &= CLR_BIT4;
+}
+/*clock*/
+
+void w5500_init(void){
+    wiznet_t_init(&wiznet_main);
+    configure_network_settings(&wiznet_main);
+    wiznet_init(&wiznet_main);
+    init_socket(&socket_main);
+    socket(&wiznet_main, &socket_main);
+    modbus_init();
+    sock_open(&socket_main);
+    sock_listen(&socket_main);
+	  timer_init();
+}
+
+void w5500_modbus(void)
+{
+            // ===== MODBUS SOCKET HANDLING INTEGRATED HERE =====
+            socket_status = check_socket_status(&socket_main);
+            
+            switch (socket_status)
+            {
+                case SOCK_STATUS_ESTABLISHED:
+                    // Only update when client is connected
+                    update_counter++;
+                    if (update_counter >= 100)
+                    {
+                        update_counter = 0;
+                        update_sensor_data();
+                        update_modbus_registers();
+                    }
+
+                    rx_len = recv(&socket_main, rx_buffer, MODBUS_MAX_FRAME_SIZE);
+
+                    if (rx_len > 0)
+                    {
+                        if (modbus_parse_frame(rx_buffer, rx_len, &modbus_frame))
+                        {
+                            tx_len = modbus_process_request(&modbus_frame, tx_buffer);
+
+                            if (tx_len > 0)
+                            {
+                                sendto(&socket_main, tx_buffer, tx_len);
+                                packet_index++;
+                            }
+                        }
+                    }
+                    delay(10);
+                    break;
+
+                case SOCK_STATUS_CLOSE_WAIT:
+                    sock_discon(&socket_main);
+                    sock_close(&socket_main);
+                    update_counter = 0;
+                    packet_index = 0; // Reset packet counter
+                    delay(100);
+                    break;
+
+                case SOCK_STATUS_CLOSED:
+                    sock_open(&socket_main);
+                    sock_listen(&socket_main);
+                    update_counter = 0;
+                    packet_index = 0; // Reset packet counter
+                    delay(100);
+                    break;
+
+                case SOCK_STATUS_INIT:
+                    sock_listen(&socket_main);
+                    delay(50);
+                    break;
+
+                default:
+                    delay(100);
+                    break;
+            }
+}
