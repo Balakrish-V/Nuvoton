@@ -1,0 +1,2786 @@
+#include "MS51_16K.h"
+#include <math.h>
+
+sbit on=P0^7;    //
+sbit relay=P0^2;
+sbit mux1=P0^4;
+sbit mux2=P0^1;
+sbit mux3=P0^0;
+sbit level=P2^0; //float - gpio read--input mode
+sbit trial=P3^0; //not using - for another float
+
+#define    ENABLE1_ADC_AIN4         ADCCON0&=0xF0;ADCCON0|=0x04;AINDIDS=0x00;AINDIDS|=0x10;ADCCON1|=0x31;ADCCON2|=0X0E;//current
+#define    ENABLE1_ADC_AIN1         ADCCON0&=0xF0;ADCCON0|=0x01;AINDIDS=0x00;AINDIDS|=0x02;ADCCON1|=0x31;ADCCON2|=0X0E;//voltage
+#define    ENABLE1_ADC_AIN3         ADCCON0&=0xF0;ADCCON0|=0x03;AINDIDS=0x00;AINDIDS|=0x08;ADCCON1|=0x01;ADCCON2|=0X0E;//switch
+
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr);
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData);
+void eepsaveread(void);
+void eesavereadtst(void);
+void eepsavewrite(void);
+
+void floattimer(void);
+void port(void);
+void delay(unsigned int msec);
+void set_clock_source(void);
+void set_clock_division_factor(unsigned char value);
+void timer0interrupt(void);
+void ADC_read(void);
+void adconv(void);
+void timerDelay(void);
+
+volatile unsigned char xdata page_buffer[128];
+unsigned char rdata;
+void setmode(void);
+void runmode(void);
+void switchtime(void);
+void initialmux(void);
+void switchscan(void);
+void voltcutoff(void);
+void drycuttoff(void);
+void ontimer(void);
+void conv2(void);
+void blank(void);
+void drydis(void);
+
+void adcconversion(void);
+void setconversion(void);
+void muxdisable(void);
+
+void dryrestart(void);
+void onttimerset(void);
+void ovlcut(void);
+void run2save(void);
+void switchtime(void);
+void dispdo(void);
+
+void antijam(void);
+void zc(void);
+void ovldispset(void);
+void ontconversion(void);
+void ovlrangeinc(void);
+void ovlrangedec(void);
+void nopump(void);
+void ADC_read(void);
+void decide(void);
+void led(void);
+void analog(void);
+void autosetclr(void);
+void displayvalue(void);
+void split(void);  //0    1    2    3     4    5   6    7    8    9    10-  11o  12u  13L  14y  15r  16d  17m  18c  19H	 20I  21t  22f  23  24c  25A   26P  27O  28n  29i  30s  31e  32t  33i  
+char xdata arr[35]={0xE7,0x84,0xCb,0xCE,0xAC,0x6E,0x6F,0xC4,0xEf,0xEE,0x08,0x0F,0xA7,0x23,0xAE,0x09,0x8F,0x4D,0x0B,0xAD,0x21,0x2B,0x69,0x00,0x63,0xED,0xE9,0x0F,0x0D,0x01,0x6E,0xEb,0x2B,0x04};//c,A,P,O,n,i
+unsigned int run1,runL,run2,rdata2,result1,vref2,ovldisp,lvc,hvc,counter3,counterrun=0,ontimercount=0;
+unsigned char  dp,display[7],seg,mode,start1,full,empty,scan1,distime,hvch,hvcl,memsave,smode2,wtr,run6=5,display2=0,switchpress,run2h,run2l,onth,ontl,check,ovl,dryt,restart,inc,dry,runle,runleont,start2,manual,oft,wlc,voltfault,fst,led2,display6,trip,reset1,run3,smode,j,reg,rega,regx,segi,regx1,i,regb,switchset2,press,sw1,sw2,switchset,switchset1,smode1=0;
+extern float sqrt  (float val);
+double resultx1;
+signed long int resultx,result2,result3;
+unsigned int idata relaytrip=0,counter1=0,setreset=0,runfloat1=0,run7=0,counter2=0,wtrmr=0,start4=0,nocount=0,counter4=0,dec1=0,dec2=0,dec3=0,run5=0,start=0,ont=0,dtime=0,scan=0,vtime=0,counter=0,ovtime=0,counttime2=5,counttime=0;
+unsigned int xdata drypercent=0,drydisp=0,rdata1=0,initial=0,runtime=0,manreset=0,runfloat=0,avgfulltime=0,counterd=0,dispv=0,switchjig=0,q=0,counttime4=0,intref=0;
+unsigned char idata tst=0,testtime=0,decrement=0,dispth=0,disptl=0,ovlr=0,mrch=0,ontimerstart=0,mrcl=0,loc=0,drysense=0,drycut=0,dryrun=0,setswitch=0,run8=0,distime1=0,switchdisp=0,noop=0,drt=0,ort=0,volthigh=0,voltlow=0,dispvh=0,dispvl=0,nooptimes=0,counttime1=2;
+signed long int xdata volt=0,cur=0,curi=0,icur=0,watt=0,iwatt=0,wcur=0,dx1=0,dx=0;
+unsigned int xdata ftime=0,dispva=0,icur1=0,icurt=0,ftimedisp=0;
+signed char xdata ibuffer[215],vbuffer[215];
+unsigned int xdata dvolt=0,dcur=0,ftimet=0,dispt=0,dispt1=0,dispv1=0,ftimet1=0,disp5=0,disp=0;
+unsigned int xdata disp3=0,dispc1=0,disp1=0,dispc=0,mrc=0,buffer=0,disp4=0,drytimer=0,icurt1=0;
+unsigned  int xdata rundry=0,run3dry=0,tempdisp=0,testcount=0,setpfd=0,setclrcounter=0,setcurrent=0,setvoltage=0,setcurrent1=0,setvoltage1=0,setpf=0,setpf1=0,tcurrent=0,tdisp=0,tpf=0,runcount=0,antij=0;
+unsigned char xdata 	dispdrt=0,testfunction=0,setfunction=0,clrfunction=0,setclrstart=0,setclrpress=0,drttimel=0,drttimeh=0,zerocross=0,floatstart=0,floatstop=0,avgerase=0,antijst=0,antijcount=0,antijstart=0,floatruntime=0,floatruntimel=0,floateeprom=0,runfloat1h=0,runfloat1l=0,floatruntimeh=0,avgfulltimeh=0,avgfulltimel=0,floatfault=0,relayoff=0,runleontrun=0,drydisable=0,run=0,runeprom=0,ontimereprom=0,memsave1=0,runont=0,runontswap=0;
+unsigned long int xdata ftimetrip=0,ftimedecide=0,drttime=1; 
+signed int dec=0;
+void main()
+{
+						set_clock_source();  //16MHZdx
+						port();
+						relay=0;
+
+						muxdisable();  //to give supply to the 7 segments. nothing prints here.common anode/cathode depends
+						on=1;//CC
+						led();//for leds in 7 segment display
+						relay=0;
+						timer0interrupt();
+						eepsaveread();
+						eesavereadtst();
+						Read_APROM_BYTE(15976);           
+						run2h=rdata;
+						Read_APROM_BYTE(15977);
+						run2l=rdata;
+						run2=((run2h<<8)|run2l);
+						if(run2>=50000)
+						{
+							run2=30;
+						}
+
+						ftimetrip=dispt1*ftimet1;
+						trial=0;
+						q=0;
+						//this switchscan is called before while(1). for functionalities to happen before the while(1),
+						//we are using this function. immediately while powering on, the user does some operation. for that operation
+						//we are calling this function before while(1)
+							switchscan();
+							if((sw1==1)&&(sw2==0))
+							{
+										switchscan();
+										if((sw1==1)&&(sw2==0))
+										{
+										avgfulltime=0;
+										runfloat1=0;
+										floatruntime=0;			
+										avgerase=1;
+										floateeprom=1;
+										display[1]=18;
+										display[2]=13;
+										display[3]=15;
+										dp=0;	
+										}
+							}   
+								result1=0;
+							resultx=0;
+							//for ct reference. for the adc to understand the actual sinusoidal waveform
+							//clamp the original incoming signal to understand both the positive and negative half cycles
+							//always use 10 bit adc. 
+							//neglect lsb 2 bit to eliminate noise.
+							//for calculating the reference for adc concerning the ct.
+							ENABLE1_ADC_AIN4;
+							for(scan=0;scan<50;scan++)
+							{
+								adcconversion();
+								resultx=result1+resultx;
+							}
+						 intref=resultx/50;
+						 if(intref>518||intref<498)
+						 {
+									 intref=510;
+						 } 
+						 while(1)
+							{
+												if(avgerase==0)
+												{	
+												switchscan();
+												if(ontimerstart==1)
+												{
+														onttimerset();
+												if((runleontrun==1)&&(sw1==0)&&(sw2==0)&&(ontimerstart==1))//for ontimer
+												{
+														 runcount++;
+													if(runcount>300)
+													{
+														runcount=0;
+														runleontrun=0;
+														runontswap=0;
+													}
+												}	
+												}
+												if((zerocross==1)&&(reset1==1))
+												{
+															zc();
+														relay=1;
+															zerocross=0;
+															trip=0;
+															reset1=0;
+															fst=0;
+															start1=0;
+												}
+												if(relayoff==1)
+												{
+													zc();
+													relay=0;
+													relayoff=0;
+												}
+													
+												/*if((tst==1))//test
+												{
+												if((volthigh==0)&&(voltlow==0)&&(relay==0))
+												{
+													reset1=1;
+												}
+												if((relay==1))
+												{
+													analog();
+												}
+												}//test*/
+
+												if((disp1>=5)&&(disp1<=100))//initial don't care
+												{
+												 if(start1==0)
+												{
+													 start++;
+													if(start>78)
+													{
+														start1=1;	
+														start=0;
+													}
+												}
+												}//initial dont care
+
+												//if((tst==0)&&(ontimerstart==0))
+												if(ontimerstart==0)
+												{
+													tcurrent=0;
+													tdisp=0;
+													tpf=0;
+													
+												if(smode==0)
+												{
+													smode1=0;
+												if((dry==0)&&(restart==0))
+												dtime=0;
+
+												if((ovl==0)&&(restart==0))
+												ovtime=0;
+
+												if((volthigh==0)&&(voltlow==0))
+												vtime=0;
+
+												if((relay==0)&&(run2<=90))
+												run2=ont;
+
+												if((disp1>=5)&&(relay==1))
+												{
+													nocount=0;
+													noop=0;
+													nooptimes=0;
+													antij=0;
+													antijcount=0;
+												}	
+												if(relay==1)
+												mode=1;
+
+												if(relay==0)
+												mode=0;
+												//if((wlc==0)&&(manual==2)&&(relay==0)&&(restart==0)&&(volthigh==0)&&(voltlow==0)&&(smode==0)&&(nooptimes<6)&&(tst==0)&&(floatfault==0))
+												if((wlc==0)&&(manual==2)&&(relay==0)&&(restart==0)&&(volthigh==0)&&(voltlow==0)&&(smode==0)&&(nooptimes<6)&&(floatfault==0))
+												{
+													start4++;
+												if(start4>30)
+												{
+													run7=0;
+													reset1=1;
+													start4=0;
+													floatstart=1;
+													floatstop=0;
+													runtime=avgfulltime;
+												}
+												}
+
+												//if((mode==0)&&(restart==0)&&(tst==0))
+												if((mode==0)&&(restart==0))
+												{
+														run3=0;
+														run=0;
+												}
+
+												if((manual==0)||(manual==1))
+												{
+																	wlc=0;
+																	start4=0;
+												}
+												analog();
+												nopump();
+												decide();
+												voltcutoff();
+												drycuttoff();
+												ovlcut();
+												ontimer();
+												floattimer();
+												autosetclr();
+												dryrestart();
+												//antijam();
+												if((disp1>5)&&(restart==0)&&(manual==2)&&(ovl==0))//for olr manual reset
+												 {
+													 manreset++;
+													 if(manreset>142)
+													 {
+														 ovlr=0;
+														 manreset=0;
+													 }
+												 }
+												//if(((tst==0)&&(loc==0)&&(ontimerstart==0)&&((manual==0)||(manual==1)))||((manual==2)&&(drt==0)&&(ort==0)&&(tst==0)))
+												 if(((loc==0)&&(ontimerstart==0)&&((manual==0)||(manual==1)))||((manual==2)&&(drt==0)&&(ort==0)))
+													 {			
+														 runmode();
+													 }
+													if((manual==2)&&(drt==1))
+												{
+													dp=0;
+													if(dispdrt==0)
+													{
+													display[1]=16;                  
+													display[2]=15;
+													display[3]=21;		
+													}
+													if(dispdrt==1)
+													{
+													tempdisp=run3dry;
+													displayvalue();
+													}
+												}
+														 switchscan();
+														 if(dry==0)
+																dryt=0;
+														// if((relay==0)&&(restart==0)&&(tst==0))
+														 if((relay==0)&&(restart==0))
+															 {
+																ovl=0;
+																dry=0;
+																run=0;
+																drt=0;
+																ort=0;
+															 }
+												}
+													}
+												 //if((smode==1)&&(tst==0))
+													if(smode==1)
+												 {
+														setmode();
+														setreset++;
+													 if(setreset>4166)
+													 {
+													 memsave=1;
+													 smode=0;
+													 setreset=0;
+													 }
+												}	
+												}
+						 }
+}
+void switchscan(void)
+{
+	 result1=0;
+	 resultx=0;
+   ENABLE1_ADC_AIN3;
+   for(scan=0;scan<250;scan++)
+	 {
+			clr_ADCCON0_ADCF;
+			set_ADCCON0_ADCS;                  
+			while(ADCF == 0);
+			result1=(ADCRH<<4)+(ADCRL&0x0F);
+			result1=result1>>2;
+			resultx=result1+resultx;
+	 }
+   vref2=resultx/250;
+
+//if((vref2>200)&&(vref2<=280)&&(tst==0)&&(loc==0)&&(ontimerstart==0))//both switch pr
+   if((vref2>200)&&(vref2<=280)&&(loc==0)&&(ontimerstart==0))//both switch pr
+   {
+				if(press==1)
+				{
+					smode=!smode;
+					switchset2=0;
+					counttime=0;
+						if(smode==1)
+						{	
+								display[1]=30;
+								display[2]=31;
+								display[3]=32;
+								dp=0;
+								counter=0;
+								relayoff=1;
+								start=0;
+								fst=0;
+								disp1=0;
+								//wlc=0;
+								setswitch=0;
+								ontimerstart=0;
+										if(restart==0)
+										{
+											dry=0;
+											ovl=0;
+										}	
+								}
+					press=0;
+				}
+   }
+		if((vref2>450)&&(vref2<=550))//switch1 press
+		{
+			sw1=1;
+			sw2=0;
+		}
+		//if((vref2>280)&&(vref2<=450)&&((tst==0)||(tst==2)))//switch 2 press
+		if((vref2>280)&&(vref2<=450))//switch 2 press
+		{
+			sw2=1;
+			sw1=0;
+		}
+		//if((vref2>550)&&((tst==0)||(tst==2)))
+		if(vref2>550)
+		{
+			press=1;
+			sw1=0;
+			sw2=0;
+			switchset=1;
+			switchset2=1;
+			counter1=0;
+			counter3=50;
+			counttime2=5;
+			counttime=0;
+			counttime4=0;
+			counttime1=2;
+			switchdisp=0;
+			setclrpress=0;
+			setclrstart=0;	
+			setclrcounter=0;
+		}
+//if((sw2==1)&&(switchset2==1)&&(smode==0)&&(restart==0)&&(volthigh==0)&&(voltlow==0)&&(tst==0)&&((manual==1)||(manual==0)))
+		if((sw2==1)&&(switchset2==1)&&(smode==0)&&(restart==0)&&(volthigh==0)&&(voltlow==0)&&((manual==1)||(manual==0)))
+	  {
+			switchtime();			
+			if(counttime1==0)
+			{	
+					mode=!mode;
+					switchdisp=0;
+					switchset2=0;
+					if(mode==1)
+					{
+						if(manual==0)
+								reset1=1;
+						if(manual==1)
+								ontimerstart=1;
+					}
+					if((mode==0)&&((manual==0)||(manual==1)))
+					{	
+							relayoff=1;
+							if(manual==1)
+									ontimerstart=0;				
+					}
+			}
+    }
+		
+		if((sw2==1)&&(restart==1)&&(start2==1)&&((manual==0)||(manual==1)))
+		{
+				switchtime();
+					if(counttime1==0)
+					{
+							restart=0;
+							initial=0;
+							start2=0;
+							volthigh=0;
+							voltlow=0;
+							switchdisp=0;
+							if(manual==0)
+							{
+							reset1=1;
+							}
+							if(manual==1)
+							{
+							ontimerstart=1;
+							}
+							ovl=0;
+							dry=0;
+					}   
+		}
+	 
+//if((sw2==1)&&(smode==0)&&(switchset2==1)&&(wlc==0)&&(tst==0)&&(start2==0)&&(restart==1))
+   if((sw2==1)&&(smode==0)&&(switchset2==1)&&(wlc==0)&&(start2==0)&&(restart==1))
+	 {	 
+	   switchtime();
+	if(counttime1==0)
+	{
+		switchdisp=0;
+		restart=0;
+		if(manual==0)
+		{
+		 reset1=1;
+		}
+		if(manual==1)
+		{
+			ontimerstart=1;
+		}
+		 ovl=0;
+		 dry=0;
+		 switchset2=0;
+		 fst=1;
+		 if(manual==2)
+		 {
+		 run=0;
+		 }
+		 loc=0;
+	 }
+		}		
+if((sw1==1)&&(switchset2==1)&&(smode==0)&&(ontimerstart==0))//15 seconds
+	{
+     //auto-set clear
+	setclrpress++;
+	if(setclrpress>3)
+	{
+	setclrpress=0;
+	setclrstart=1;
+	if(relay==1)
+	{
+		 clrfunction=0;
+		 setfunction=1;
+	}
+	if(relay==0)
+	{
+		setfunction=0;
+		clrfunction=1;
+	}
+   } 
+ }	
+//if((sw2==1)&&(((tst==2)&&(switchset2==1))||((nooptimes>=6)&&(smode==0)&&(switchset2==1)&&(tst==0)&&(manual==2))||((floatfault==1)&&(smode==0)&&(switchset2==1)&&(tst==0)&&(manual==2))))
+if((sw2==1)&&(((nooptimes>=6)&&(smode==0)&&(switchset2==1)&&(tst==0)&&(manual==2))||((floatfault==1)&&(smode==0)&&(switchset2==1)&&(manual==2))))
+{
+	switchtime();	
+	if(counttime1==0)
+	{
+	switchset2=0;
+	switchdisp=0;
+	nooptimes=0;
+	floatfault=0;
+	wlc=0;
+	tst=0;
+	}
+}
+}
+void delay(unsigned int msec)
+{
+	 unsigned int i,j;
+	for(i=0; i<msec; i++)
+	for(j=0; j<50; j++);
+}
+void port(void)
+{
+	SFRS=0;
+	P00_PUSHPULL_MODE;
+	P01_PUSHPULL_MODE;
+	P02_PUSHPULL_MODE;
+	P03_PUSHPULL_MODE;
+	P04_PUSHPULL_MODE;
+	P05_INPUT_MODE;
+	P06_INPUT_MODE;
+	P07_QUASI_MODE;
+	P1M1=0;
+	P1M2=0xFF;
+	P30_INPUT_MODE;
+}
+
+void set_clock_source(void)
+{
+	set_CKEN_HIRCEN;         
+  while((CKSWT & SET_BIT5) == 0);
+}
+
+void set_clock_division_factor(unsigned char value)
+{
+  CKDIV = value;
+}
+void timer0interrupt(void)
+{
+  TMOD = 0x01;
+  
+	TH0 = 0XFE;   
+  TL0 = 0X0B;//750usec
+	TR0 = 1;           
+  ET0 = 1;           
+  EA =  1; 
+  TR0 = 1;	
+}
+void timer0_isr() interrupt 1
+{
+	TH0 = 0XFE;  
+  TL0 = 0X0B;
+	TF0 = 0;
+	
+if((setclrstart==1)&&(switchset2==1))
+	{
+		setclrcounter++;
+		if(setclrcounter>=2600)
+		{
+			counttime2=counttime2-1;
+			setclrcounter=0;
+		}
+		if(counttime2==0)
+		{
+			switchset2=0;
+		  setclrstart=0;
+			testfunction=1;
+		}
+	}	
+if(floateeprom==1)
+{
+  on=1;
+	muxdisable();
+	runfloat1h=runfloat1/256;
+	runfloat1l=runfloat1%256;
+	Write_DATAFLASH_BYTE(15992,runfloat1h);
+	Write_DATAFLASH_BYTE(15993,runfloat1l);
+	
+  Write_DATAFLASH_BYTE(15994,floatruntime);
+ 
+	avgfulltimeh=avgfulltime/256;
+	avgfulltimel=avgfulltime%256;
+	Write_DATAFLASH_BYTE(15995,avgfulltimeh);
+	Write_DATAFLASH_BYTE(15996,avgfulltimel);
+  floateeprom=0;
+}	
+		
+if(memsave==1)
+	{
+	on=1;
+	muxdisable();
+	eepsavewrite();
+  eepsaveread();
+	memsave=0;
+	}
+if(runeprom==1)
+{
+	on=1;
+	muxdisable();
+  run2save();
+  runeprom=0;
+}	
+if(ontimereprom==1)
+{
+	muxdisable();
+	on=1;
+	onth=run2/256;
+	ontl=run2%256;
+	Write_DATAFLASH_BYTE(15982,onth);
+	Write_DATAFLASH_BYTE(15983,ontl);
+	run2save();
+	ontimereprom=0;
+}
+
+if(smode==0)
+ {
+  /*if(tst==1)
+	{
+		if((noop==0))
+		{
+		if(runle==0)
+		{
+		 display[1]=21;//Test
+     display[2]=5;
+	   display[3]=21;
+		 dp=0;
+		}
+		if(runle==1)
+		{
+		 blank();
+			
+		}
+	}
+		if((disp1<5)&&(relay==1)&&(noop==1))
+		{
+		if(runle==0)
+		{
+		 display[1]=28;//noop
+     display[2]=27;
+	   display[3]=26;
+		 dp=0;
+		}
+		if(runle==1)
+		{
+		 blank();	
+		}
+	}
+	 }
+	if(q==1)
+	{
+	      muxdisable();
+			  on=1;
+		    dispvh=dispv1/256;
+				dispvl=dispv1%256;
+				Write_DATAFLASH_BYTE(15989,dispvh);
+				Write_DATAFLASH_BYTE(15990,dispvl);
+		    dispth=dispt1/256;
+				disptl=dispt1%256;
+		    Write_DATAFLASH_BYTE(15997,dispth);
+		    Write_DATAFLASH_BYTE(15998,disptl);
+		    Write_DATAFLASH_BYTE(15991,ftimet1);
+		    eesavereadtst();
+		    Write_DATAFLASH_BYTE(15978,ovldisp);
+		    Read_APROM_BYTE(15978);
+				rdata2=rdata;
+				ovldisp=rdata2;
+		    q=0;
+	}
+	//test*/
+ 
+/*if(((drt==1)&&(manual==2))||((ort==1)&&(manual==2)))
+	 {
+		 counterd++;
+		if(runle==0)
+   {
+if((dispc<50)&&(manual==2)&&(drt==1))
+{
+if(counterd<8448)//3sec
+	{
+	dp=0;
+	display[1]=16;                  
+  display[2]=15;
+  display[3]=21;
+	}
+if((counterd>=8448)&&(counterd<11264))//1sec
+	{
+	dispdo();
+	}
+if(counterd>=11246)
+{
+	counterd=0;
+	runle=0;
+	runL=0;
+}
+}
+if((dispc<50)&&(manual==2)&&(ort==1))
+{
+ if(counterd<8448)//3sec
+	{
+	dp=0;
+	display[1]=11;                  
+  display[2]=15;
+  display[3]=21;
+	}
+if((counterd>=8448)&&(counterd<11264))//1sec
+	{
+	dispdo();
+	}
+	if(counterd>=11264)
+	{
+			counterd=0;
+		  runle=0;
+		  runL=0;
+	}
+}
+		}
+		if(runle==1)
+		{
+		 blank();
+		}
+	 }*/
+ }
+ 
+//if(((manual==1)||(dry==1)||(floatfault==1)||(tst==1)||(loc==1)||(ovl==1)||((ontimerstart==1)&&(sw2==0))))//LED blinking
+ if(((manual==1)||(dry==1)||(floatfault==1)||(loc==1)||(ovl==1)||((ontimerstart==1)&&(sw2==0))))//LED blinking
+{
+	runL++;
+	if(runL>1306)
+	{
+		runle=!runle;
+		runL=0;
+	}
+}
+
+if((loc==1)&&(sw2==0)&&(sw1==0))
+{
+		 display[1]=13;//loc
+     display[2]=11;
+	   display[3]=24;
+		 dp=0;	
+}
+
+
+//waterlevel
+if((manual==2)&&(smode==0)&&(loc==0)&&(floatfault==0))
+{
+  wtr++;
+if(wtr<201)
+  {
+if(level==0)
+{
+wtrmr++;
+}
+  }
+   if(wtr>200)
+	{
+   if(wtrmr>9)
+	{
+     full++;
+	}
+  if(wtrmr<10)
+	{
+		empty++;
+		if(empty>5)
+		{
+		empty=0;
+		wlc=0;
+		full=0;
+		}
+	}
+  wtrmr=0;
+  wtr=0;
+if(full>50)//24
+	{
+	wlc=1;
+if(antijstart==0)
+  relayoff=1;
+	full=0;
+	empty=0;
+	floatstart=0;
+	if(floatstop==1)
+ floatruntime=floatruntime+1;
+	}
+	}
+}
+
+
+if(reset1==0)
+{
+/*mux1=0;
+ mux2=0;
+ mux3=0;*///ca
+ muxdisable();//cc
+ on=1;
+ segi++;
+if(segi>12)
+  {
+	  segi=1;
+		seg++;
+    if(seg>3)
+		seg=1;
+	}
+	regx=display[seg];
+	regx1=arr[regx];
+	rega=(1<<(segi-1));
+	rega=(rega&regx1);
+if((segi==8)&&(seg==1)&&(dp==1))
+{
+  rega=rega|(0x10); 
+}
+if((segi==8)&&(seg==2)&&(dp==2))
+{
+  rega=rega|(0x10); 
+}
+//regb=~rega;//ca
+regb=rega;//cc
+P1=regb;
+if(seg==1)
+{
+//mux1=1;//ca
+	mux1=0;//cc
+  mux2=1;
+	mux3=1;
+	on=1;
+}
+if(seg==2)
+{
+//mux2=1;//ca
+	mux1=1;
+	mux2=0;//cc
+	mux3=1;
+	on=1;
+}
+if(seg==3)
+{
+//mux3=1;//ca
+	mux1=1;
+	mux2=1;
+	mux3=0;//cc
+	on=1;
+}
+
+if((segi==9))
+{
+  //if((smode==0)&&(disp1>=5)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&((manual==0)||(manual==2))||((disp1>=5)&&(tst==1)))
+	if((smode==0)&&(disp1>=5)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&((manual==0)||(manual==2)))
+	{
+	P1=0xDF;
+	muxdisable();//cc
+	on=0;
+	
+	}
+	//if(((smode==0)&&(disp1>=5)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(manual==1))||(tst==1))
+	if(((smode==0)&&(disp1>=5)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(manual==1)))
+	{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xDF;
+	muxdisable();//cc
+	on=0;
+	
+	}
+	//if((smode==0)&&(disp1>=5)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(manual==1)&&(run2<=90)&&(tst==0))//inspiron commanded
+	//if((smode==0)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(manual==1)&&(ontimerstart==1)&&(tst==0))//latitude commaned
+	if((smode==0)&&(ovl==0)&&(dry==0)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(manual==1)&&(ontimerstart==1))
+	{
+		if(runle==0)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xDF;
+	muxdisable();//cc
+	on=0;
+	  }
+		if(runle==1)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xFF;
+	muxdisable();//cc
+	on=1;
+		}
+	
+	}
+}
+
+//if((segi==9)&&((ovl==1)||(dry==1))&&(smode==0)&&(wlc==0)&&(tst==0))
+if((segi==9)&&((ovl==1)||(dry==1))&&(smode==0)&&(wlc==0))
+{
+	
+	if(dry==1)
+	{
+	if(runle==0)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0x3F;
+	muxdisable();//cc
+	on=0;
+	
+		}
+		if(runle==1)
+		{
+ /*mux1=0;
+	 mux2=0;
+	 mux3=0;*///ca
+	 P1=0xFF;
+	 muxdisable();//cc
+	 on=1;
+	 
+		}
+	}
+	if(ovl==1)
+	{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	//P1=0xFE;
+	P1=0x3F;
+	muxdisable();//cc
+	on=0;
+	
+	}
+}
+if((segi==9)&&(smode==0))
+{
+	if((wlc==1)&&(manual==2)&&(floatfault==0))
+	{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0x7F;
+	muxdisable();//cc
+	on=0;
+	}
+	if((wlc==1)&&(manual==2)&&(floatfault==1))
+	{
+	if(runle==0)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+  P1=0x7F;
+	muxdisable();//cc
+	on=0;
+		}
+	if(runle==1)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xFF;
+	muxdisable();//cc
+	on=1;
+		}
+		}
+	
+}
+if((segi==10))
+{
+	if(manual==2)
+	{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xFE;
+	muxdisable();//cc
+	on=0;
+	}
+	if(manual==1)
+	{
+	if(runle==0)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+  P1=0xFE;
+	muxdisable();//cc
+	on=0;
+		}
+	if(runle==1)
+		{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xFF;
+	muxdisable();//cc
+	on=1;
+	
+		}
+	}
+}
+if((segi==11)&&((volthigh==1)||(voltlow==1))&&(smode==0)&&(wlc==0))
+{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xBF;//red blue
+	muxdisable();//cc
+	on=0;
+	
+	 // P1=0xF9;//green blue
+	//P1=0xFd;//green blue
+}
+if((segi==11)&&(smode==1))
+{
+/*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	P1=0xFF;
+	muxdisable();//cc
+	on=1;
+	
+}
+}
+
+if((reset1==1)&&(trip==0))
+{
+ /*mux1=0;
+	mux2=0;
+	mux3=0;*///ca
+	muxdisable();//cc
+	on=1;
+  trip=1;
+
+}
+
+if((reset1==1)&&(trip==1))
+ {
+		relaytrip++;
+	 if(relaytrip>2816)
+    {
+		zerocross=1;
+    relaytrip=0;
+		}
+	}
+}
+void voltcutoff(void)
+{
+if((volthigh==1)||(voltlow==1))
+{
+	if((restart==0)&&(smode==0))
+	{
+		vtime++;
+		if(((disp>hvc)&&(disp<=hvc+20))||(disp<lvc))
+			vtime=vtime;
+		if((disp>hvc+20)&&(disp<=hvc+40))
+			vtime=vtime+2;
+		if(disp>hvc+40)
+			vtime=vtime+5;
+	}
+if((vtime>100))//For disp off and relay on
+{
+	 relayoff=1;
+	 vtime=0;
+	 start2=1;
+	 restart=1;
+}  
+}
+}
+void run2save(void)
+{
+	run2h=run2/256;
+	run2l=run2%256;
+	Write_DATAFLASH_BYTE(15976,run2h);
+	Write_DATAFLASH_BYTE(15977,run2l);
+}
+void dispdo(void)
+{
+	
+	display[1]=run5/100;
+	display2=run5%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+	
+}
+
+/*void antijam(void)
+{
+if((antijstart==0)&&(relay==0)&&(smode==0)&&(volthigh==0)&&(voltlow==0))
+{
+antij++;
+if(antij>=28800)//1hour=39840//28800//480 for 1minute
+{
+	antij=0;
+	antijcount=antijcount+1;
+	if(antijcount>=36)//3days//72//for 36hour for superteck 
+	{
+		antijstart=1;
+		antijcount=0;
+		antij=0;
+		reset1=1;
+	}
+}
+}
+if(antijstart==1)
+{
+	antijst++;
+	if(antijst>=80)
+	{
+		relayoff=1;
+		antijstart=0;
+		antijst=0;
+		antijcount=0;
+	}
+}
+}*/
+
+void drycuttoff(void)
+{
+//if((dry==1)&&(tst==0))
+if(dry==1)
+{
+	if((restart==0)&&(smode==0))
+	{
+		dtime++;
+	}
+if((dtime>142))//For disp off and relay on//28173//40 sec
+{
+	dtime=0;
+	relayoff=1;
+	restart=1;
+	if(manual==2)
+		run5=oft;
+	if((manual==2)&&(drttime>=1))
+		drt=1;
+}
+}	
+}
+
+void ovlcut(void)
+{
+//if((ovl==1)&&(tst==0))
+if(ovl==1)
+ {
+if((restart==0)&&(smode==0))
+	{
+		 ovtime++;
+if(disp1>rdata2)
+		{
+			initial=((150-disp4));
+			initial=(31+((initial*15)/10));//11264//8448//31
+		}
+	}
+if(ovtime>initial)//For disp off and relay on
+{	
+	 relayoff=1;
+	 ovtime=0;
+	 restart=1;
+	 initial=0;
+	if(manual==2)
+	{
+		run5=5;
+	}
+	if((ovlr==5)&&(manual==2))
+	{
+		relayoff=1;
+		ovlr=0;
+		loc=1;
+	}
+}
+}
+}
+
+void dryrestart(void)
+{
+	if((manual==2)&&(smode==0)&&(dispc<50)&&(restart==1)&&(drt==1)&&(wlc==0)&&(voltfault==0))//drt
+{
+   rundry++;
+if(rundry%60==0)
+dispdrt=!dispdrt;
+if(rundry>480)//480
+{
+   run3dry=run3dry-1;
+	 rundry=0;
+}	
+	if(run3dry==0)
+	{
+		reset1=1;
+		run3dry=drttime;
+		dry=0;
+		drt=0;
+		restart=0;
+	}
+}	
+/*if((manual==2)&&(smode==0)&&(dispc<50)&&(restart==1)&&(wlc==0)&&(volthigh==0)&&(voltlow==0)&&(tst==0)&&((dry==1)||((ovl==1)&&(loc==0))))//drt&&ort
+	{
+	if(dry==1)
+	 drt=1;
+	if((ovl==1)&&(loc==0))
+	 ort=1;
+   run++;
+if(run>112)
+{
+   run3=run3+1;
+	 run=0;
+}	
+if(run3==4)//60360
+	{
+		run3=0;
+		run5=run5-1;
+	}
+	if(run5==0)
+	{
+		reset1=1;
+		restart=0;
+		if(dry==1)
+		{
+		run5=oft;
+		dry=0;
+		drt=0;
+		}
+		if(ovl==1)
+		{
+		run5=5;
+		ovl=0;
+		manreset=0;
+		ovlr++;
+		ort=0;
+		}
+	}
+}	*/	
+}
+void ontimer(void)
+{
+//if((manual==1)&&(smode==0)&&(dispc>50)&&(restart==0)&&(tst==0))//ontime
+if((manual==1)&&(smode==0)&&(dispc>50)&&(restart==0))//ontime
+{
+	 run++;
+	 run7++;
+if(run7>160)
+{
+   run8=run8+1;
+   run7=0;
+}
+if(run8==3)
+{
+	run8=0;
+	runeprom=1;
+}
+if(run>=7)
+{
+	run=0;
+	run1=run1+1;
+}
+	run2=run2-run1;
+	run1=0;
+	if(run2==0)
+	{
+	relayoff=1;
+	run2=ont;
+	ontimereprom=1;		
+	}	
+}
+}
+
+void floattimer(void)
+{
+//if((manual==2)&&(smode==0)&&(dispc>50)&&(restart==0)&&(tst==0)&&(floatstart==1))
+if((manual==2)&&(smode==0)&&(dispc>50)&&(restart==0)&&(floatstart==1))
+{
+	 run7++;
+if(run7>=8)//1minute//1,2,3
+{
+	if(floatruntime<10)
+	{
+     runfloat=runfloat+1;
+		 floatstop=1;
+	}
+	if(floatruntime>=3)
+	{
+		runtime=runtime-1;
+		if(runtime==0)
+		{
+			if((dispc>=50)&&(relay==1))
+			{
+			floatfault=1;
+			wlc=1;
+		 
+      relayoff=1;
+	    full=0;
+	    empty=0;
+	    floatstart=0;	
+			runtime=avgfulltime;
+			if(floatstop==1)
+      floatruntime=floatruntime+1;
+			}
+		}
+	}
+   run7=0;
+}	
+}
+//if((manual==2)&&(smode==0)&&(dispc<=50)&&(restart==0)&&(tst==0)&&(floatstart==0)&&(floatstop==1)&&(floatruntime<=10))
+if((manual==2)&&(smode==0)&&(dispc<=50)&&(restart==0)&&(floatstart==0)&&(floatstop==1)&&(floatruntime<=10))
+{
+  runfloat1=runfloat1+runfloat;
+	avgfulltime=runfloat1/floatruntime;
+	avgfulltime=avgfulltime*1.5;
+	runtime=avgfulltime;
+	runfloat=0;
+  floatstop=0;
+  floateeprom=1;
+}
+}
+
+void onttimerset(void)
+{
+	if(ontimerstart==1)
+		{
+			setmode();
+			if(runleontrun==1)
+			{
+			dp=2;
+		  if(ont>5990)
+			ont=0;
+		  ont=run2;
+		  dec=ont;
+	    ontconversion();
+			}
+			if(runleontrun==0)
+			{
+				runont++;
+				if(runont>=100)
+				{
+					runont=0;
+					runontswap=!runontswap;
+				}
+		 if(runontswap==0)
+			{
+			dp=2;
+		  if(ont>5990)
+			ont=0;
+		  ont=run2;
+		  dec=ont;
+	    ontconversion();
+	    }
+		if(runontswap==1)
+		 {
+		display[1]=11;//ont
+    display[2]=28;
+	  display[3]=21;
+		dp=0;
+		 }
+	   }
+			ontimercount++;
+			if(ontimercount>2600)
+			{
+				ontimerstart=0;
+				ontimercount=0;
+				reset1=1;
+				run2=ont;
+				ontimereprom=1;								
+			}	
+		}
+}
+
+void ovlrangeinc(void)
+ {
+	 /*if((dec>(((dispt1/10)*14)/10))||(dec>140))//80
+	 {
+		   dec=(((dispt1/10)*12)/10);
+	 }*/
+	 if(dec>120)
+	 {
+		 dec=10;
+	 }
+ }
+ void ovlrangedec(void)
+ {
+		 /*if((dec<(((dispt1/10)*12)/10))||(dec<1))
+			{
+	       dec=(((dispt1/10)*14)/10);
+				 if(dec>=140)
+				 dec=140;
+		  }*/
+	  if(dec<10)
+	 {
+		 dec=120;
+	 } 
+	 
+ }
+void switchtime(void)
+{
+	counttime++;
+	if(counttime>2)
+	switchdisp=1;
+	if(counttime>20)
+	{
+  counttime1=counttime1-1;
+	counttime=0;
+	}		
+}
+
+void nopump(void)
+{
+//if((disp1<5)&&(relay==1)||((disp1<5)&&(relay==1)&&(tst==1)))
+if((disp1<5)&&(relay==1))
+{
+	nocount++;
+/*if((nocount>15)&&(tst==1)&&(disp1<5))	
+{
+	noop=1;
+}*/
+if(nocount>71)
+{
+	//if(tst==0)
+	//{
+	nocount=0;
+  noop=1;	
+  relayoff=1;
+	if(manual==2)
+	nooptimes++;
+	//}
+	/*if(tst==1)
+	{
+		relayoff=1;
+		nocount=0;
+		tst=0;
+		noop=0;
+	}*/
+}
+}
+}
+void setmode(void)
+{
+if(((sw2==1)&&(smode==1)&&(setswitch==0)&&(smode1<=9)&&(ontimerstart==0))||((setswitch==0)&&(smode==1)&&(sw1==1)&&(smode1>=8)&&(ontimerstart==0)))
+{
+	counter++;
+if((counter>25)&&(smode==1)&&(switchset==1))	
+{
+  counter=0;
+	switchset=0;
+	switchset1=1;
+  smode1=smode1+1;
+	/*if((drydisable==1)&&(smode1==3))
+		smode1=5;*/
+	if((manual!=2)&&(smode1==7))
+		  smode1=8;
+	  switchpress=0;
+	  setreset=0;
+	
+	if(memsave1==1)
+	{
+		memsave=1;
+		memsave1=0;
+	}
+	if((sw2==1)&&(smode1==9))
+	{
+		smode1=1;
+	  setreset=0;
+	}
+	if((sw1==1)&&(smode1==11))
+	{
+		smode1=1;
+	  setreset=0;
+	}
+	       //ovl          dry          lvc           hvc         mode        tsp           volt           cur      
+	  if((smode1==2)||(smode1==5)||(smode1==4)||(smode1==6)||(smode1==3)||(smode1==1)||(smode1==7)||(smode1==8)||(smode1==9)||(smode1==10))
+		{
+			counter4=80;
+		}             		
+}
+}
+if(((smode1==2)||(smode1==5)||(smode1==4)||(smode1==6)||(smode1==3)||(smode1==1)||(smode1==7)||(smode1==8)||(smode1==9)||(smode1==10))&&(switchset1==1))
+{
+	   counter2++;
+	if(counter2<counter4)
+	 {
+		 setswitch=1;
+		 if(smode1==1)
+		{
+		display[1]=17;//mod
+    display[2]=11;
+	  display[3]=16;
+		dp=0;
+		}
+		if(smode1==2)
+		{
+		display[1]=11;//ovldisp
+    display[2]=12;
+	  display[3]=13;
+			dp=0;
+		}
+		if(smode1==3)
+		{
+		display[1]=16;//dry
+    display[2]=15;
+	  display[3]=14;
+		dp=0;
+		}	
+		if(smode1==4)
+		{
+		drydis();
+		}
+		if(smode1==5)
+		{
+		display[1]=19;//hvc
+    display[2]=12;
+	  display[3]=18;
+			dp=0;
+		}
+		if(smode1==6)
+		{
+		display[1]=13;//lvc
+    display[2]=12;
+	  display[3]=18;
+			dp=0;
+		}
+	
+		if(smode1==7)
+		{
+		display[1]=16;//drt
+    display[2]=15;
+	  display[3]=32;
+		dp=0;
+		}
+		/*if(smode1==7)
+		{
+		display[1]=17;//mrc
+    display[2]=15;
+	  display[3]=18;
+			dp=0;
+		}*/
+		if(smode1==8)
+		{
+		 display[1]=21;//Test
+     display[2]=5;
+	   display[3]=26;
+		 dp=0;	
+		}
+		
+	/*	if(smode1==9)
+		{
+		display[1]=21;//t-v
+    display[2]=10;
+	  display[3]=12;
+		dp=0;
+		}
+		if(smode1==10)
+		{
+		display[1]=21;//t-A
+    display[2]=10;
+	  display[3]=25;
+		dp=0;
+		}*/
+    if(smode1==9)
+		{
+		display[1]=21;//t-f
+    display[2]=10;
+	  display[3]=22;
+		dp=0;
+		}	
+   if(smode1==10)
+		{
+		display[1]=21;//t-e
+    display[2]=10;
+	  display[3]=31;
+		dp=0;
+		}			
+	 }
+	 
+	if((counter2>counter4))
+	{
+     setswitch=0;
+		if(smode1==2)
+		{
+			dec=ovldisp;
+			dp=2;	
+		}
+		if(smode1==5)
+		{
+			dec=hvc;
+			dp=0;
+			if(dec>320)
+			dec=230;
+		}
+		if(smode1==6)
+		{
+			dec=lvc;
+			dp=0;
+			if(dec>230)
+			dec=150;
+		}
+		if(smode1==3)
+		{	
+		/*dec=drypercent;
+		dp=0;
+		if(dec>95)
+			dec=50;*/
+	if(drypercent>((rdata2*9)/10))
+			     dec=1;
+      dec=drypercent;
+			dp=2;			
+		}
+		if(smode1==1)
+		{
+		display[1]=17;
+    display[2]=10;
+	  if(manual==0)
+	  display[3]=17;
+	  if(manual==1)
+		display[3]=5;
+	  if(manual==2)
+		display[3]=25;
+		dp=0;
+    }
+		if(smode1==7)
+		{
+			dec=drttime;
+			dp=0;
+		}
+		/*if(smode1==9)
+		{
+			dec=dispv1;
+			//dec=ftimet1;
+			dp=0;
+		}
+		if(smode1==10)
+		{
+			dec=dispt1;
+			dp=1;
+		}*/
+	 if(smode1==9)
+		{
+			dec=avgfulltime/60;
+			dp=0;
+		}
+		if(smode1==10)
+		{
+			dec=ftimedisp;
+		//dec=ftimet1;
+			dp=0;
+		}
+		
+		     //ovl         hvu           luv         oft          mrc           vol         cur          floatavg
+		if((smode1==2)||(smode1==3)||(smode1==5)||(smode1==6)||(smode1==7)||(smode1==9)||(smode1==10))
+		{
+	  setconversion();
+	  }
+		switchset1=0;
+		counter2=0;
+		switchpress=1;
+	}
+}
+if(((sw1==1)&&(switchpress==1)&&((smode1==1)||(smode1==2)||(smode1==3)||(smode1==4)||(smode1==5)||(smode1==6)||(smode1==7)))||((sw1==1)&&(ontimerstart==1)))
+{
+	if(ontimerstart==1)
+	{
+	ontimercount=0;
+	runleontrun=1;
+	runcount=0;
+	}
+	//switchpress=0;
+	counter1++;
+	setreset=0;
+	if(counter1>100)
+	{
+	memsave1=1;
+	counttime4=1;
+	counter1=0;
+	}
+	if((counttime4==1)&&(check==1))
+	{
+		counter3=counter3-5;
+		check=0;
+	if(counter3<=5)
+	{
+		counter3=5;
+	}
+  }
+if((counter1>20)&&(switchset2==1)&&(counttime4==0))
+{
+	memsave1=1;
+  counter1=0;
+	switchset2=0;
+	decrement=1;
+}
+if((counter1>counter3)&&(counttime4==1))
+{
+	 decrement=0;
+	 check=1;
+	 counter1=0;
+	 switchset2=0;
+	if((smode1==2)||(smode1==3)||(smode1==5)||(smode1==6)||(smode1==7))
+	{
+	dec=dec+1;
+	if(smode1==2)
+	{
+	ovlrangeinc();
+	ovldispset();
+	}
+	
+	if(smode1==5)
+		{
+			if(dec>320)
+		     dec=230;
+			   hvc=dec;
+		     dp=0;
+		}
+	if(smode1==6)
+		{
+			if(dec>230)
+		  dec=150;
+			lvc=dec;
+		  dp=0;
+		}
+	if(smode1==3)
+		{
+		if(dec>((rdata2*9)/10))
+		{
+			      dec=1;}
+		     drypercent=dec;
+		       dp=2;
+		/*if(dec>95)
+	 dec=50;
+	 drypercent=dec;
+	 dp=0;*/
+	  }
+  if(smode1==7)
+		{
+			if(dec>720)
+		  dec=0;
+			drttime=dec;
+			run3dry=drttime;
+		  dp=0;
+		}		
+	setconversion();
+  }
+	if((ontimerstart==1))
+	{
+	dec=dec+10;
+	if(dec>5990)
+  dec=10;
+	ontconversion();
+	ont=dec;
+	run2=ont;
+	dp=2;
+  }
+}
+}
+if((decrement==1)&&(switchset2==1))
+{
+	 decrement=0;
+	 switchset2=0;
+  if((smode1==2)||(smode1==3)||(smode1==5)||(smode1==6)||(smode1==7))
+{
+	/*if(dec==0)
+	dec=1-dec;
+	if(dec>0)*/
+	dec=dec-1;
+	if(smode1==2)
+	{
+	ovlrangedec();
+	ovldispset();
+  }
+	/*if(smode1==5)
+	{
+		if(dec<1)
+		dec=(ovldisp*0.9);
+	  drydisp=dec;
+	  rdata1=drydisp;
+		dp=2;
+	}*/
+	if(smode1==5)
+	{
+	  if(dec<230)
+		dec=320;
+	  hvc=dec;
+		dp=0;
+  }
+	if(smode1==6)
+	{
+	if(dec<150)
+		dec=230;
+	  lvc=dec;
+		dp=0;
+  }
+	
+	if(smode1==3)
+	{
+	/*if(dec<50)
+		dec=95;
+	  drypercent=dec;
+	  dp=0;*/
+		     if(dec<1)
+			  dec=((rdata2*9)/10);
+		   drypercent=dec;
+		      dp=2;
+  }
+	if(smode1==7)
+		{
+			if(dec<0)
+		  dec=720;
+			drttime=dec;
+			run3dry=drttime;
+		  dp=0;
+		}
+	setconversion();
+}
+	
+if((ontimerstart==1))//for ontimer
+	{
+	if(dec==0)
+	dec=10-dec;
+	if(dec>0)
+	dec=dec-10;
+	if(dec<10)
+  dec=5990;
+	ontconversion();
+	ont=dec;
+	run2=ont;
+	dp=2;
+	}
+if(smode1==4)
+	{
+	drydisable=!drydisable;
+	drydis();
+	}	
+if(smode1==1)
+	{
+	manual=manual+1;
+	if(manual==3)
+	   manual=0;
+	
+	   display[1]=17;//min
+     display[2]=10;
+	if(manual==0)
+	   display[3]=17;
+	if(manual==1)
+		 display[3]=5;
+	if(manual==2)
+		 display[3]=25;
+		 dp=0;
+	}
+}
+}
+
+void ovldispset(void)
+{
+	ovldisp=dec;
+	rdata2=ovldisp;
+	dp=2;
+}
+void drydis(void)
+{
+	  display[1]=16;//D-A
+    display[2]=10;
+		if(drydisable==0)	
+	  display[3]=16;
+		if(drydisable==1)	
+	  display[3]=31;
+		dp=0;
+}
+
+void ontconversion(void)
+{
+	dec1=dec/60;
+	display[1]=dec1/10;
+	display[2]=dec1%10;
+	dec2=dec%60;
+	display[3]=dec2/10;
+}
+void setconversion(void)
+{
+	if(smode1!=3)
+	{
+	display[1]=dec/100;
+	display2  =dec%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+	}
+	if(smode1==3)
+	{
+		if(drypercent<=99)
+		{
+	  display[1]=0;
+    display[2]=drypercent/10;
+		display[3]=drypercent%10;
+		}
+		if(drypercent>99)
+		{
+	display[1]=drypercent/100;
+	display2  =drypercent%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+		}
+	}
+}
+void eepsavewrite(void)
+{
+	      Write_DATAFLASH_BYTE(15974,drypercent);
+	      Write_DATAFLASH_BYTE(15975,drydisable);
+				Write_DATAFLASH_BYTE(15978,ovldisp);
+				Write_DATAFLASH_BYTE(15979,lvc);
+	      hvch=hvc/256;
+				hvcl=hvc%256;
+				Write_DATAFLASH_BYTE(15980,hvch);
+				Write_DATAFLASH_BYTE(15981,hvcl);
+	
+	      onth=ont/256;
+				ontl=ont%256;
+				Write_DATAFLASH_BYTE(15982,onth);
+				Write_DATAFLASH_BYTE(15983,ontl);
+	
+	 			Write_DATAFLASH_BYTE(15984,oft);
+	     
+	      drttimeh=drttime/256;
+	      drttimel=drttime%256;
+	      Write_DATAFLASH_BYTE(15985,drttimeh);
+	      Write_DATAFLASH_BYTE(15986,drttimel);
+	    /*  mrch=mrc/256;
+				mrcl=mrc%256;
+				Write_DATAFLASH_BYTE(15985,mrch);
+				Write_DATAFLASH_BYTE(15986,mrcl);*/
+	
+	      Write_DATAFLASH_BYTE(15987,manual);
+	
+				run2h=run2/256;
+	      run2l=run2%256;
+	      Write_DATAFLASH_BYTE(15976,run2h);
+	      Write_DATAFLASH_BYTE(15977,run2l);
+				 Write_DATAFLASH_BYTE(15999,setpfd);
+				
+}
+
+void eepsaveread(void)
+{
+	       Read_APROM_BYTE(15974);
+         drypercent=rdata;
+	       if(drypercent>=100)
+           drypercent=10;//50
+				 
+	       Read_APROM_BYTE(15975);
+         drydisable=rdata;
+	       if(drydisable>=5)
+           drydisable=0;
+				 
+				 Read_APROM_BYTE(15978);
+         rdata2=rdata;
+         if(rdata2>=250)
+           {
+	          rdata2=25;//12
+           }
+         ovldisp=rdata2;
+				  
+				 Read_APROM_BYTE(15979);
+         lvc=rdata;
+         if(lvc>=250)
+          {
+	         lvc=170;
+          }
+					
+         Read_APROM_BYTE(15982);           
+         onth=rdata;
+         Read_APROM_BYTE(15983);
+         ontl=rdata;
+         ont=((onth<<8)|ontl);
+         if(ont>=50000)
+         {
+	       ont=300;
+         }
+				 run2=ont;
+				
+         Read_APROM_BYTE(15984); 
+         oft=rdata;
+         if(oft>=250)
+         {
+	       oft=3;
+         }
+         run5=oft;
+				 
+				 Read_APROM_BYTE(15980);           
+         hvch=rdata;
+				 Read_APROM_BYTE(15981);
+				 hvcl=rdata;
+				 hvc=((hvch<<8)|hvcl);
+				 if(hvc>=330)
+         {
+	        hvc=320;
+         }
+				 
+       	 Read_APROM_BYTE(15987);           
+         manual=rdata;
+		     if(manual>=4)
+         {
+	       manual=0;
+         }
+			Read_APROM_BYTE(15985);
+	    drttimeh=rdata;
+	    Read_APROM_BYTE(15986);
+	    drttimel=rdata;
+	    drttime=((drttimeh<<8)|(drttimel));
+	     if(drttime>720)
+			 {
+				 drttime=1;
+			 }
+			 run3dry=drttime;
+				/* Read_APROM_BYTE(15985);           
+         mrch=rdata;
+         Read_APROM_BYTE(15986);
+         mrcl=rdata;
+         mrc=((mrch<<8)|mrcl);
+				 if(mrc>=50000)
+          {
+	         mrc=400;
+          }*/
+				 Read_APROM_BYTE(15992);           
+         runfloat1h=rdata;
+         Read_APROM_BYTE(15993);
+         runfloat1l=rdata;
+         runfloat1=((runfloat1h<<8)|runfloat1l);
+				 if(runfloat1>=50000)
+          {
+	         runfloat1=0;
+          }
+        
+				 Read_APROM_BYTE(15994);
+         floatruntime=rdata;
+	       if(floatruntime>=50)
+            floatruntime=0;
+
+				Read_APROM_BYTE(15995);           
+        avgfulltimeh=rdata;
+        Read_APROM_BYTE(15996);
+        avgfulltimel=rdata;
+        avgfulltime=((avgfulltimeh<<8)|avgfulltimel);
+				if(avgfulltime>=50000)
+          {
+	         avgfulltime=0;
+          }
+					runtime=avgfulltime;	
+    Read_APROM_BYTE(15999);		
+        setpfd=rdata;
+         if(setpfd>250)
+				 {
+					 setpfd=65;
+				 }
+        ftimedisp=((setpfd/3)*5);					
+  }
+void muxdisable(void)
+{
+	mux1=1;
+	mux2=1;
+	mux3=1;
+}
+void blank(void)
+{
+	display[1]=23;//blank
+  display[2]=23;
+	display[3]=23;
+  dp=0;
+}
+void eesavereadtst(void)
+{
+
+Read_APROM_BYTE(15997);           
+dispth=rdata;
+Read_APROM_BYTE(15998);
+disptl=rdata;
+dispt1=((dispth<<8)|disptl);
+if(dispt1>5000)
+dispt1=100;
+Read_APROM_BYTE(15989);           
+dispvh=rdata;
+Read_APROM_BYTE(15990);
+dispvl=rdata;
+dispv1=((dispvh<<8)|dispvl);
+if(dispv1>350)
+dispv1=230;
+Read_APROM_BYTE(15991);           
+ftimet1=rdata;
+if(ftimet1>100)
+ftimet1=99;
+}
+void runmode(void)
+{
+	if((switchdisp==0)&&(avgerase==0)&&(setclrstart==0)&&(testfunction==0))
+	{
+   counter++;//1,4,1,8,4
+	//	counter=10;
+	if((counter<5)&&(drt==0)&&(ort==0))//1sec
+	{
+	dp=0;
+	display[1]=10;                  
+  display[2]=12;
+  display[3]=10;
+	}
+	if((counter>=5)&&(counter<15)&&(ort==0)&&(drt==0))//3sec
+	{
+		 dp=0;
+	   if(disp>999)
+		 disp=999;
+  display[1]=disp/100;
+	display2=disp%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+		
+	/*display[1]=ftime/100;
+	display2=ftime%100;
+  display[2]=display2/10;
+	display[3]=display2%10;*/
+		 
+	}
+	if(dispc>50)
+	{
+	if(counter>=15&&counter<20)//1sec
+	{
+	dp=0;
+	display[1]=10;                  
+  display[2]=25;
+  display[3]=10;
+	}
+  if(counter>=20&&counter<35)//3sec
+	{	
+	if(dispc<1000)
+	{
+		dispc1=dispc;
+		dp=1;
+	}
+	if(dispc>999)
+	{
+		dispc1=dispc/10;
+		dp=2;
+	}
+	if(dispc1>999)
+		dispc1=999;
+	//dispc1=disp3;
+	display[1]=dispc1/100;
+	display2=dispc1%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+	}
+if(manual==1)
+	{	
+if(counter>=35&&counter<40)
+{
+	  dp=0;
+	  display[1]=11;//ont
+    display[2]=28;
+	  display[3]=21;
+}	
+if(counter>=40&&counter<55)
+{
+	dp=0;
+	if(run2<=90)
+	{	
+	display[1]=21;
+  display[2]=run2/10;
+	display[3]=run2%10;
+	}
+	if(run2>90)
+	{
+	dec3=run2/60;
+	display[1]=17;
+  display[2]=dec3/10;
+	display[3]=dec3%10;
+	}
+}
+if(counter>=55)
+	counter=0;
+}
+if((manual==0)||(manual==2))
+{
+		if(counter>=35)
+			counter=0;
+}
+	}
+if(dispc<50)
+{
+if(counter>=15&&counter<35)//4sec
+	{
+if((volthigh==0)&&(voltlow==0)&&(dry==0)&&(ovl==0))
+{
+	dp=0;
+	display[1]=27;                  
+  display[2]=22;
+  display[3]=22;
+}
+if(noop==1)
+{
+	dp=0;
+	display[1]=28;                  
+  display[2]=27;
+  display[3]=26;
+}
+if((volthigh==1))
+{
+	dp=0;
+	display[1]=19;                  
+  display[2]=12;
+  display[3]=18;
+}
+if((voltlow==1))
+{
+	dp=0;
+	display[1]=13;                  
+  display[2]=12;
+  display[3]=18;
+}
+if((wlc==1)&&(manual==2))
+{
+	dp=0;
+	display[1]=22;                  
+  display[2]=12;
+  display[3]=13;
+}
+if(dry==1)
+{
+	dp=0;
+	display[1]=16;                  
+  display[2]=15;
+  display[3]=14;
+}
+if(ovl==1)
+{
+	dp=0;
+	display[1]=11;                  
+  display[2]=12;
+  display[3]=13;
+}	
+	}
+if(counter>35)
+	{
+	  counter=0;
+	}
+}
+}
+if((switchdisp==1)&&(avgerase==0)&&(setclrstart==0)&&(testfunction==0))
+ {
+	dp=0;
+	if(counttime1>99)
+	counttime1=99;
+	display[1]=26;
+  display[2]=counttime1/10;
+	display[3]=counttime1%10;	
+	}	
+if((setclrstart==1)&&(testfunction==0))
+{
+	dp=0;
+	if((setclrstart==1)&&(setfunction==1))
+	display[1]=25;//A
+	if((setclrstart==1)&&(clrfunction==1))
+	display[1]=24;//C
+	display[2]=counttime2/10;
+	display[3]=counttime2%10;
+}
+if((setclrstart==0)&&(testfunction==1))
+	{
+		if(setfunction==1)
+		{
+	display[1]=25;
+	display[2]=30;
+	display[3]=21;	
+		}
+		if(clrfunction==1)
+		{
+	display[1]=25;
+	display[2]=24;
+	display[3]=15;
+		}
+	}	
+}
+void autosetclr(void)
+{
+if(testfunction==1)
+{
+     testcount++;
+	if(clrfunction==1)
+		{
+		 ovldisp=60;
+	   lvc=150;
+		 hvc=280;
+		 drypercent=10;
+		 setpfd=65;
+		ftimedisp=((setpfd/3)*5);
+			dry=0;
+			ovl=0;
+			volthigh=0;
+			voltlow=0;
+			vtime=0;
+			restart=0;
+			relayoff=0;
+			dtime=0;
+			ovtime=0;
+			counter=0;
+		}
+		if(setfunction==1)
+		{
+			if(testcount<=40)
+			{
+			setcurrent=disp1+setcurrent;
+			setvoltage=disp+setvoltage;
+			setpf=ftime+setpf;
+			}
+			if(testcount==40)
+			{
+				setcurrent1=setcurrent/40;
+				setvoltage1=setvoltage/40;
+				setpf1=setpf/40;
+				setcurrent=0;
+				setvoltage=0;
+				setpf=0;
+				if(relay==1)
+				{
+				hvc=(setvoltage1*13)/10;
+					if(hvc>=275)
+						 hvc=275;
+				lvc=(setvoltage1*7)/10;
+					if(lvc<=150)
+						 lvc=150;
+				ovldisp=(setcurrent1*12)/10;
+					if(ovldisp>=200)
+						 ovldisp=200;
+				drypercent=(setcurrent1*8)/10;
+					if(drypercent<=10)
+						drypercent=10;
+				setpfd=(setpf1*85)/100;
+          if(setpfd<=65)
+             setpfd=65;
+        ftimedisp=((setpfd/3)*5);					
+				}
+			}	
+		}
+	if(testcount>90)
+	{
+		memsave=1;
+		setfunction=0;
+		clrfunction=0;
+		testfunction=0;
+		testcount=0;	
+	}
+}
+}
+void displayvalue(void)
+{
+	if(tempdisp>999)
+		tempdisp=999;
+	display[1]=tempdisp/100;
+	display2=tempdisp%100;
+  display[2]=display2/10;
+	display[3]=display2%10;
+}
+void decide(void)
+{
+//if((smode==0)&&(restart==0)&&(loc==0)&&(ontimerstart==0)&&(relay==1)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&(tst==0)&&((start1==1)||(disp1>100)))
+if((smode==0)&&(restart==0)&&(loc==0)&&(ontimerstart==0)&&(relay==1)&&(volthigh==0)&&(voltlow==0)&&(wlc==0)&&((start1==1)||(disp1>100)))
+	{
+		  if(disp1>500)
+		  disp1=500;
+	    disp4=disp1*100;
+	    disp4=disp4/rdata2;
+	    if(disp4>150)
+			{
+				 disp4=150;
+			}
+    if((disp1>=(drypercent+(drypercent/10)))&&((drydisable==1)&&(ftime>setpfd+8)))
+			{
+				dry=0;
+			}	
+    if(disp1<=(rdata2-(rdata2/10)))
+			{
+				ovl=0;
+			}
+	if((disp1<drypercent)||((drydisable==1)&&(ftime<setpfd)))	
+			{
+				dry=1;					
+			}
+			if(disp1>rdata2)
+			{
+				ovl=1;					
+			}			
+			/*if(((ftimedecide>((ftimetrip*75)/100))&&(ftime>=85)&&(drydisable==1))||((drydisable==0)&&(dispc>((dispt1*(drypercent+5))/100))))
+			{
+				dry=0;
+			}
+			if(disp1<(rdata2-(rdata2/10)))
+			{
+				ovl=0;
+			}
+			if(((drydisable==1)&&((ftimedecide<=((ftimetrip*70)/100))||(ftime<=80)))||((drydisable==0)&&(dispc<((dispt1*drypercent)/100))))
+			{
+				dry=1;					
+			}
+			if(disp1>rdata2)
+			{
+				ovl=1;					
+			}*/
+}	
+}
+void adcconversion(void)
+{
+	    clr_ADCCON0_ADCF;
+      set_ADCCON0_ADCS;                  
+      while(ADCF == 0);
+		  result1=(ADCRH<<4)+(ADCRL&0x0F);
+	    result1=result1>>2;
+}
+void analog(void)
+{
+	 switchscan();
+   zc();
+for(scan1=0;scan1<1;scan1++)
+{	
+for(scan=0;scan<193;scan++)//27usec
+	{
+		  ENABLE1_ADC_AIN1;
+	    adcconversion();
+		  volt=result1;//29 us
+		  
+		  ENABLE1_ADC_AIN4;
+			adcconversion();
+			cur=result1;//57.5 us
+		
+     result2=cur-intref;
+		 /* if(cur>=intref)
+      result2=cur-intref;
+      if(cur<intref)
+      result2=intref-cur;//73.5*/
+			
+			result2=result2/2;
+			ibuffer[scan]=result2;//147 us
+			
+			result2=volt-511;
+		  result2=result2/2;
+      vbuffer[scan]=result2;
+	}
+	
+  resultx1=0; 
+  volt=0;
+  cur=0;	
+	watt=0;
+	result3=0;
+	resultx=0;
+	icur=0;
+	curi=0;
+  iwatt=0;
+	
+for(scan=0;scan<193;scan++)//0.25msec
+		{
+			volt=vbuffer[scan];
+			volt=volt*2;
+			result3=volt*volt;
+			resultx=resultx+result3;
+			
+			cur=ibuffer[scan];
+			cur=cur*2;
+			icur=cur*cur;
+			curi=curi+icur;
+			
+		  watt=((volt/1.26)*(cur*0.8));//0.8
+			//watt=(volt/1.26);
+			iwatt=watt+iwatt;
+		}
+}
+
+	iwatt=iwatt/291;//89.9;//88.5;//86
+  if(iwatt<0)
+  iwatt=iwatt*(-1);//watts
+ 
+	resultx1=resultx/15;//350
+	resultx=sqrt(resultx1);
+	disp5=resultx/1.212;//1.224;//1.194
+	
+	resultx1=curi/200;
+	icur=sqrt(resultx1);
+	icur=(icur*100);
+  icur1=icur/6.796;//7.10;//7.26
+	icurt1=icur1/10;
+	if(icur1<30)
+		 icur1=0;
+  
+	watt=disp5*icurt1;
+  watt=watt/10;//VA
+	
+	distime1++;
+	dcur=icur1+dcur;
+	dx=iwatt+dx;
+	dx1=watt+dx1;
+	dvolt=disp5+dvolt;
+	if(distime1==10)
+	{
+		 distime1=0;
+		 dispc=dcur/10;
+		 disp3=dx/10;
+		 dispva=dx1/10;
+		 disp=dvolt/10;
+		 dcur=0;
+		 dx=0;
+		 dx1=0;
+		 dvolt=0;
+	}
+	/*if(relay==1)
+	{
+		dispc=700;
+	}
+	if(relay==0)
+	{
+		dispc=0;
+	}*/
+	disp1=dispc/10;
+	ftime=((disp3*100)/(dispva));//pf
+	if(ftime>99)
+		ftime=99;
+	if((smode==0)&&(dispc>=50))
+	    ftimedisp=((ftime/3)*5);
+	
+	if(dispc<50)
+	{
+		 ftime=0;
+	}
+ ftimedecide=ftime*dispc;
+ //ftimedecide1=((ftimedecide*100)/ftimetrip);//9471/8547
+	 	 
+/*if(tst==1)
+{	
+if(((disp1>=5)&&(start1==1))||(disp1>100))
+{
+  testtime++;
+	tcurrent=icur1+tcurrent;
+	tdisp=disp+tdisp; 
+	tpf=ftime+tpf;
+	if(testtime>=50)
+	{
+		ftimet1=tpf/50;
+		dispv1=tdisp/50;
+		dispt1=tcurrent/50;
+		
+		if((dispt1>=((mrc*15)/10))||(dispt1<=((mrc*6)/10))||((ftimet1<=68)&&(drydisable==1))||(dispt1>1000))
+		{
+			tst=2;
+			display[1]=22;
+      display[2]=13;
+	    display[3]=21;
+				
+		}
+		if(((ftimet1>68)&&(dispt1>((mrc*6)/10))&&(dispt1<((mrc*15)/10))&&(dispt1<=1000)&&(drydisable==1))||((dispt1>((mrc*6)/10))&&(dispt1<((mrc*15)/10))&&(dispt1<=1000)&&(drydisable==0)))
+		{
+		  ovldisp=((dispt1/10)*1.4);
+			if(ovldisp>=140)
+			ovldisp=140;
+		  rdata2=ovldisp;
+			ftimetrip=dispt1*ftimet1;
+      tst=0;
+		  q=1;
+		}
+     		
+    tpf=0;		
+		tcurrent=0;
+    tdisp=0;		
+		testtime=0;
+		counter=0;
+		start1=0;
+		dtime=0;
+		ovtime=0;
+		dry=0;
+		ovl=0;
+		initial=0;
+		relayoff=1;
+		if(relay==0)
+		{
+			icurt=0;
+			disp1=0;
+		}
+}
+}	
+}*/
+if((disp>hvc)&&(restart==0)&&(wlc==0))
+{
+	volthigh=1;
+}
+if((disp<lvc)&&(restart==0)&&(wlc==0))
+{
+	voltlow=1;	
+}
+if(disp<=(hvc-5)&&((manual==2)||(start2==0)))
+{
+	volthigh=0;
+}
+if(disp>=(lvc+5)&&((manual==2)||(start2==0)))
+{
+	voltlow=0;
+}
+
+if(((volthigh==0)&&(voltlow==0))&&(start2==1)&&(manual==2)&&(wlc==0)&&(nooptimes<6))
+	{
+	  //voltfault=0;
+		reset1=1;
+		restart=0;
+		initial=0;
+		start2=0;
+	}
+ }
+
+void zc(void)
+{
+ result2=10;
+while(result2>4)//.15usec
+ {
+		ENABLE1_ADC_AIN1;
+		adcconversion();
+    if(result1>=511)
+    result2=result1-511;
+    if(result1<511)
+    result2=511-result1;
+ } 
+}
+void led(void)
+{
+	
+for(j=1;j<9;j++)            
+{	
+if(j==1)
+P1=0x40;//40
+if(j==2)
+P1=0x80;
+if(j==3)
+P1=0x04;
+if(j==4)
+P1=0x02;
+if(j==5)
+P1=0x01;
+if(j==6)
+P1=0x20;
+if(j==7)
+P1=0x08;
+if(j==8)
+P1=0x10;
+initialmux();
+}
+for(j=1;j<6;j++)
+{
+if(j==1)
+P1=0xBF;//red
+if(j==2)
+P1=0x7F;//blue
+if(j==3)
+P1=0xDF;//green
+if(j==4)
+P1=0x3F;//violet
+if(j==5)
+P1=0xFE;//yellow
+for(q=0;q<250;q++)
+{	
+for(i=1;i<2;i++)
+{
+if(i==1)
+{
+on=0;
+muxdisable();
+}
+delay(10);
+on=1;
+muxdisable();
+delay(20);
+}
+}	
+}
+}
+void initialmux(void)
+{
+for(q=0;q<150;q++)
+{	
+for(i=1;i<4;i++)
+{
+if(i==1)
+{
+on=1;
+mux1=1;
+mux2=0;
+mux3=0;
+}
+if(i==2)
+{
+
+on=1;
+mux1=0;
+mux2=1;
+mux3=0;
+}
+if(i==3)
+{
+	
+on=1;
+mux1=0;
+mux2=0;
+mux3=1;
+}
+delay(1);
+on=1;
+mux1=1;
+mux2=1;
+mux3=1;
+delay(7);
+}
+}	
+}	
+ 
+unsigned char Read_APROM_BYTE(unsigned int code *u16_addr)
+{
+    //UINT8 rdata;
+    rdata = *u16_addr >> 8;
+    return rdata;
+}
+void Write_DATAFLASH_BYTE(unsigned int u16EPAddr, unsigned char u8EPData)
+{
+    unsigned char looptmp = 0;
+    unsigned int u16_addrl_r;
+    unsigned int RAMtmp;
+
+    //Check page start address
+    u16_addrl_r = (u16EPAddr / 128) * 128;
+
+    //Save APROM data to XRAM0
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        RAMtmp = Read_APROM_BYTE((unsigned int code *)(u16_addrl_r + looptmp));
+        page_buffer[looptmp] = RAMtmp;
+    }
+
+    // Modify customer data in XRAM
+    page_buffer[u16EPAddr & 0x7f] = u8EPData;
+
+    //Erase APROM DATAFLASH page
+    IAPAL = u16_addrl_r & 0xff;
+    IAPAH = (u16_addrl_r >> 8) & 0xff;
+    IAPFD = 0xFF;
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x22;
+    set_IAPTRG_IAPGO;
+
+    //Save changed RAM data to APROM DATAFLASH
+    set_CHPCON_IAPEN;
+    set_IAPUEN_APUEN;
+    IAPCN = 0x21;
+
+    for (looptmp = 0; looptmp < 0x80; looptmp++)
+    {
+        IAPAL = (u16_addrl_r & 0xff) + looptmp;
+        IAPAH = (u16_addrl_r >> 8) & 0xff;
+        IAPFD = page_buffer[looptmp];
+        set_IAPTRG_IAPGO;
+    }
+
+    clr_IAPUEN_APUEN;
+    clr_CHPCON_IAPEN;
+}
+
+
+
+
+
+
+      
+
